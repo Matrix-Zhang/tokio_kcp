@@ -1,0 +1,17 @@
+[package]
+name = "tokio_kcp"
+version = "0.1.0"
+authors = ["Matrix <113445886@qq.com>"]
+description = "A kcp implementation for tokio"
+license = "MIT"
+keywords = ["kcp", "udp", "reliable", "tokio"]
+
+[dependencies]
+bytes = "0.4"
+futures = "0.1"
+kcp = { git = "https://github.com/Matrix-Zhang/kcp.git" }
+mio = "0.6"
+rand = "0.3"
+time = "0.1"
+tokio-core = { git = "https://github.com/tokio-rs/tokio-core.git" }
+tokio-io = "0.1"

@@ -186,33 +186,46 @@ pub struct KcpStream {
 impl KcpStream {
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> KcpStreamNew {
         let local: SocketAddr = "0.0.0.0:0".parse().unwrap();
-        let udp = Rc::new(UdpSocket::bind(&local, handle).unwrap());
-        let kcp = Kcp::new(
+
+        let (registration, set_readiness) = Registration::new2();
+
+        let timer = match Timeout::new_at(Instant::now(), handle) {
+            Ok(timeout) => Rc::new(RefCell::new(timeout)),
+            _ => return KcpStreamNew { inner: None },
+        };
+
+        let udp = match UdpSocket::bind(&local, handle) {
+            Ok(udp) => Rc::new(udp),
+            _ => return KcpStreamNew { inner: None },
+        };
+
+        let kcp = Rc::new(RefCell::new(Kcp::new(
             rand::random::<u32>(),
             KcpOutput {
                 udp: udp.clone(),
                 peer: *addr,
             },
-        );
-        let kcp = Rc::new(RefCell::new(kcp));
-        let (registration, set_readiness) = Registration::new2();
-        let timer = Rc::new(RefCell::new(
-            Timeout::new_at(Instant::now(), handle).unwrap(),
-        ));
+        )));
+
         let io = KcpIo {
             kcp: kcp.clone(),
             registration: registration,
             set_readiness: set_readiness.clone(),
         };
 
+        let io = match PollEvented::new(io, handle) {
+            Ok(evented) => evented,
+            _ => return KcpStreamNew { inner: None },
+        };
+
         let interval = KcpTimer {
             kcp: kcp.clone(),
             timer: timer.clone(),
         };
+
         handle.spawn(interval.for_each(|_| Ok(())).then(|_| Ok(())));
-        let io = PollEvented::new(io, handle).unwrap();
-        let inner = KcpClientStream { udp: udp, io: io };
-        KcpStreamNew { inner: Some(inner) }
+
+        KcpStreamNew { inner: Some(KcpClientStream { udp: udp, io: io }) }
     }
 }
 

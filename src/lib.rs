@@ -125,49 +125,56 @@ impl Evented for KcpIo {
     }
 }
 
-struct KcpClient {
-    socket: Rc<UdpSocket>,
-    buf: Box<[u8]>,
-    to_input: Option<(usize, SocketAddr)>,
-    kcp: Rc<RefCell<Kcp<KcpOutput>>>,
-    set_readiness: SetReadiness,
-    timer: Rc<RefCell<Timeout>>,
+pub struct KcpClientStream {
+    udp: Rc<UdpSocket>,
+    io: PollEvented<KcpIo>,
 }
 
-impl Future for KcpClient {
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<(), io::Error> {
-        loop {
-            if let Some((size, _peer)) = self.to_input.take() {
-                let current = current();
-                let mut kcp = self.kcp.borrow_mut();
-                kcp.input(&mut BytesMut::from_buf(&self.buf[..size]))?;
-                kcp.update(current)?;
-                let dur = kcp.check(current);
-                self.timer.borrow_mut().reset(
-                    Instant::now() +
-                        Duration::from_millis(dur as u64),
-                );
-
-                self.set_readiness.set_readiness(mio::Ready::readable())?;
-            }
-
-            self.to_input = Some(try_nb!(self.socket.recv_from(&mut self.buf)));
+impl Read for KcpClientStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Ok((n, _)) = self.udp.recv_from(buf) {
+            self.io.get_ref().kcp.borrow_mut().input(
+                &mut BytesMut::from_buf(
+                    &buf[..n],
+                ),
+            )?;
+            self.io.get_ref().set_readiness.set_readiness(
+                mio::Ready::readable(),
+            )?;
         }
+        self.io.read(buf)
+    }
+}
+
+impl AsyncRead for KcpClientStream {}
+
+impl AsyncWrite for KcpClientStream {
+    fn shutdown(&mut self) -> Poll<(), io::Error> {
+        Ok(().into())
+    }
+}
+
+impl Write for KcpClientStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.io.get_ref().set_readiness.set_readiness(
+            mio::Ready::writable(),
+        )?;
+        self.io.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.io.flush()
     }
 }
 
 pub struct KcpStreamNew {
-    inner: Option<KcpStream>,
+    inner: Option<KcpClientStream>,
 }
 
 impl Future for KcpStreamNew {
-    type Item = KcpStream;
+    type Item = KcpClientStream;
     type Error = io::Error;
 
-    fn poll(&mut self) -> Poll<KcpStream, io::Error> {
+    fn poll(&mut self) -> Poll<KcpClientStream, io::Error> {
         Ok(Async::Ready(self.inner.take().unwrap()))
     }
 }
@@ -204,17 +211,7 @@ impl KcpStream {
         };
         handle.spawn(interval.for_each(|_| Ok(())).then(|_| Ok(())));
         let io = PollEvented::new(io, handle).unwrap();
-        let inner = KcpStream { io: io };
-        handle.spawn(
-            KcpClient {
-                socket: udp.clone(),
-                buf: Box::new([0; 1500]),
-                to_input: None,
-                kcp: kcp.clone(),
-                set_readiness: set_readiness.clone(),
-                timer: timer.clone(),
-            }.then(|_| Ok(())),
-        );
+        let inner = KcpClientStream { udp: udp, io: io };
         KcpStreamNew { inner: Some(inner) }
     }
 }

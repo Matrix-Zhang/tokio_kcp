@@ -48,12 +48,16 @@ impl Write for KcpOutput {
     }
 }
 
-struct KcpTimer {
+#[derive(Clone)]
+struct KcpSession {
     kcp: Rc<RefCell<Kcp<KcpOutput>>>,
     timer: Rc<RefCell<Timeout>>,
+    elapsed: Rc<RefCell<Instant>>,
+    set_readiness: SetReadiness,
+    owner: Option<(SocketAddr, Rc<RefCell<HashMap<SocketAddr, KcpSession>>>)>,
 }
 
-impl Stream for KcpTimer {
+impl Stream for KcpSession {
     type Item = ();
     type Error = io::Error;
 
@@ -62,11 +66,20 @@ impl Stream for KcpTimer {
         match timer.poll() {
             Ok(Async::Ready(())) => {
                 let mut kcp = self.kcp.borrow_mut();
-                kcp.update(current())?;
-                let dur = kcp.check(current());
-                let next = Instant::now() + Duration::from_millis(dur as u64);
-                timer.reset(next);
-                Ok(Async::Ready(Some(())))
+                if self.elapsed.borrow().elapsed().as_secs() < 90 {
+                    kcp.update(current())?;
+                    let duration = Duration::from_millis(kcp.check(current()) as u64);
+                    let next = Instant::now() + duration;
+                    timer.reset(next);
+                    Ok(Async::Ready(Some(())))
+                } else {
+                    kcp.expired();
+                    self.set_readiness.set_readiness(Ready::readable())?;
+                    if let Some(ref owner) = self.owner {
+                        owner.1.borrow_mut().remove(&owner.0);
+                    }
+                    Ok(Async::NotReady)
+                }
             }
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Err(e) => Err(e),
@@ -128,18 +141,21 @@ impl Evented for KcpIo {
 pub struct KcpClientStream {
     udp: Rc<UdpSocket>,
     io: PollEvented<KcpIo>,
+    elapsed: Rc<RefCell<Instant>>,
 }
 
 impl Read for KcpClientStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Ok((n, _)) = self.udp.recv_from(buf) {
+            let elapsed = self.elapsed.borrow().elapsed();
+            *self.elapsed.borrow_mut() += elapsed;
             self.io.get_ref().kcp.borrow_mut().input(
                 &mut BytesMut::from_buf(
                     &buf[..n],
                 ),
             )?;
             self.io.get_ref().set_readiness.set_readiness(
-                mio::Ready::readable(),
+                Ready::readable(),
             )?;
         }
         self.io.read(buf)
@@ -218,14 +234,25 @@ impl KcpStream {
             _ => return KcpStreamNew { inner: None },
         };
 
-        let interval = KcpTimer {
+        let elapsed = Rc::new(RefCell::new(Instant::now()));
+
+        let interval = KcpSession {
             kcp: kcp.clone(),
             timer: timer.clone(),
+            elapsed: elapsed.clone(),
+            set_readiness: set_readiness.clone(),
+            owner: None,
         };
 
         handle.spawn(interval.for_each(|_| Ok(())).then(|_| Ok(())));
 
-        KcpStreamNew { inner: Some(KcpClientStream { udp: udp, io: io }) }
+        KcpStreamNew {
+            inner: Some(KcpClientStream {
+                udp: udp,
+                io: io,
+                elapsed: elapsed,
+            }),
+        }
     }
 }
 
@@ -255,14 +282,9 @@ impl AsyncWrite for KcpStream {
     }
 }
 
-struct KcpSession {
-    kcp: Rc<RefCell<Kcp<KcpOutput>>>,
-    set_readiness: SetReadiness,
-}
-
 pub struct KcpListener {
     udp: Rc<UdpSocket>,
-    sessions: HashMap<SocketAddr, KcpSession>,
+    sessions: Rc<RefCell<HashMap<SocketAddr, KcpSession>>>,
     handle: Handle,
 }
 
@@ -284,7 +306,7 @@ impl KcpListener {
         UdpSocket::bind(addr, handle).map(|udp| {
             KcpListener {
                 udp: Rc::new(udp),
-                sessions: HashMap::new(),
+                sessions: Rc::new(RefCell::new(HashMap::new())),
                 handle: handle.clone(),
             }
         })
@@ -296,11 +318,13 @@ impl KcpListener {
         loop {
             let (size, addr) = self.udp.recv_from(&mut buf)?;
 
-            if let Some(session) = self.sessions.get(&addr) {
+            if let Some(session) = self.sessions.borrow_mut().get_mut(&addr) {
+                let elapsed = session.elapsed.borrow().elapsed();
+                *session.elapsed.borrow_mut() += elapsed;
                 session.kcp.borrow_mut().input(&mut BytesMut::from_buf(
                     &buf[..size],
                 ))?;
-                session.set_readiness.set_readiness(mio::Ready::readable())?;
+                session.set_readiness.set_readiness(Ready::readable())?;
                 continue;
             }
 
@@ -311,20 +335,31 @@ impl KcpListener {
                     peer: addr,
                 },
             );
+
             let kcp = Rc::new(RefCell::new(kcp));
+
             let (registration, set_readiness) = Registration::new2();
+
             let timer = Rc::new(RefCell::new(Timeout::new_at(Instant::now(), &self.handle)?));
+
             let io = KcpIo {
                 kcp: kcp.clone(),
                 registration: registration,
                 set_readiness: set_readiness.clone(),
             };
-            let interval = KcpTimer {
+
+            let session = KcpSession {
                 kcp: kcp.clone(),
                 timer: timer.clone(),
+                elapsed: Rc::new(RefCell::new(Instant::now())),
+                set_readiness: set_readiness.clone(),
+                owner: Some((addr, self.sessions.clone())),
             };
+
             self.handle.spawn(
-                interval.for_each(|_| Ok(())).then(|_| Ok(())),
+                session.clone().for_each(|_| Ok(())).then(
+                    |_| Ok(()),
+                ),
             );
             let io = PollEvented::new(io, &self.handle).unwrap();
             let stream = KcpStream { io: io };
@@ -336,11 +371,7 @@ impl KcpListener {
                 mio::Ready::readable(),
             )?;
 
-            let session = KcpSession {
-                kcp: kcp.clone(),
-                set_readiness: set_readiness.clone(),
-            };
-            self.sessions.insert(addr, session);
+            self.sessions.borrow_mut().insert(addr, session);
             return Ok((stream, addr));
         }
     }

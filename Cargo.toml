@@ -1,7 +1,7 @@
 [package]
-name = "tokio_kcp"
+name = "tokio-kcp"
 version = "0.1.0"
-authors = ["Matrix <113445886@qq.com>"]
+authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
 readme = "README.md"
@@ -17,3 +17,7 @@ rand = "0.3"
 time = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
+log = "0.3"
+
+[dev-dependencies]
+env_logger = "0.4.3"

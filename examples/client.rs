@@ -3,6 +3,7 @@ extern crate futures;
 extern crate tokio_core;
 extern crate tokio_kcp;
 extern crate tokio_io;
+extern crate env_logger;
 
 use std::env;
 use std::io::{self, Read, Write};
@@ -10,17 +11,19 @@ use std::net::SocketAddr;
 use std::thread;
 
 use bytes::{BufMut, BytesMut};
+use futures::{Future, Sink, Stream};
 use futures::sync::mpsc;
-use futures::{Sink, Future, Stream};
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
-use tokio_io::codec::{Encoder, Decoder};
+use tokio_io::codec::{Decoder, Encoder};
 use tokio_kcp::KcpStream;
 
 fn main() {
-    let addr = env::args().nth(1).unwrap_or_else(
-        || "127.0.0.1:2233".into(),
-    );
+    let _ = env_logger::init();
+
+    let addr = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1:2233".into());
     let addr = addr.parse::<SocketAddr>().unwrap();
 
     let mut core = Core::new().unwrap();
@@ -35,10 +38,9 @@ fn main() {
         let send_stdin = stdin_rx.forward(sink);
         let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));
 
-        send_stdin
-            .map(|_| ())
-            .select(write_stdout.map(|_| ()))
-            .then(|_| Ok(()))
+        send_stdin.map(|_| ())
+                  .join(write_stdout.map(|_| ()))
+                  .then(|_| Ok(()))
     });
 
     core.run(client).unwrap();
@@ -80,7 +82,8 @@ fn read_stdin(mut tx: mpsc::Sender<Vec<u8>>) {
     loop {
         let mut buf = vec![0; 1024];
         let n = match stdin.read(&mut buf) {
-            Err(_) | Ok(0) => break,
+            Ok(0) => break,
+            Err(err) => panic!("Failed to read from stdin, err: {:?}", err),
             Ok(n) => n,
         };
         buf.truncate(n);

@@ -59,7 +59,7 @@ impl KcpListener {
         loop {
             let (size, addr) = self.udp.recv_from(&mut buf)?;
 
-            if self.sessions.input_by_addr(&addr, &buf[..size])? {
+            if self.sessions.input_by_addr(&addr, &mut buf[..size])? {
                 continue;
             }
 

@@ -29,7 +29,7 @@ impl KcpSessionUpdater {
         self.sessions.borrow_mut()
     }
 
-    pub fn input_by_addr(&mut self, addr: &SocketAddr, buf: &[u8]) -> io::Result<bool> {
+    pub fn input_by_addr(&mut self, addr: &SocketAddr, buf: &mut [u8]) -> io::Result<bool> {
         match self.sessions_mut().get_mut(addr) {
             None => Ok(false),
             Some(session) => {
@@ -125,7 +125,7 @@ impl SharedKcpSession {
         last_update.elapsed()
     }
 
-    pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
+    pub fn input(&mut self, buf: &mut [u8]) -> io::Result<()> {
         let mut inner = self.borrow_mut();
         inner.set_last_update(Instant::now());
 

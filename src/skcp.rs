@@ -22,6 +22,7 @@ impl KcpOutput {
 
 impl Write for KcpOutput {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        trace!("[SEND] UDP {} size={} {:?}", self.peer, buf.len(), buf);
         self.udp.send_to(buf, &self.peer)
     }
 

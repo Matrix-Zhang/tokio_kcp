@@ -1,13 +1,14 @@
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::Duration;
 
 use futures::{Async, Poll, Stream};
 use kcp::{Kcp, get_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::{Handle, PollEvented};
 
-use kcp_io::KcpIo;
+use kcp_io::{KcpIo, KcpIoMode};
 use session::KcpSessionUpdater;
 use skcp::{KcpOutput, SharedKcp};
 use stream::KcpStream;
@@ -17,6 +18,7 @@ pub struct KcpListener {
     udp: Rc<UdpSocket>,
     sessions: KcpSessionUpdater,
     handle: Handle,
+    session_expire: Duration,
 }
 
 /// An iterator that infinitely accepts connections on a `KcpListener`
@@ -43,6 +45,7 @@ impl KcpListener {
                                                   udp: Rc::new(udp),
                                                   sessions: KcpSessionUpdater::new(),
                                                   handle: handle.clone(),
+                                                  session_expire: Duration::from_secs(90),
                                               }
                                           })
     }
@@ -63,10 +66,16 @@ impl KcpListener {
                 continue;
             }
 
+            trace!("[ACPT] Accepted connection {}", addr);
+
             let kcp = Kcp::new(get_conv(&buf), KcpOutput::new(self.udp.clone(), addr));
             let shared_kcp = SharedKcp::new(kcp);
 
-            let io = KcpIo::new(shared_kcp, addr, &self.handle, Some(self.sessions.clone()))?;
+            let io = KcpIo::new(shared_kcp,
+                                addr,
+                                &self.handle,
+                                Some(self.sessions.clone()),
+                                KcpIoMode::Server(self.session_expire))?;
             let io = PollEvented::new(io, &self.handle)?;
 
             let mut stream = KcpStream::new(io);
@@ -79,5 +88,11 @@ impl KcpListener {
     /// Returns an iterator over the connections being received on this listener.
     pub fn incoming(self) -> Incoming {
         Incoming { inner: self }
+    }
+
+    /// Set session expire time
+    /// Clients will be dropped after `duration` of time without interactions
+    pub fn set_session_expire(&mut self, duration: Duration) {
+        self.session_expire = duration;
     }
 }

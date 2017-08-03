@@ -1,5 +1,6 @@
 use std::cell::RefCell;
-use std::io::{self, Read, Write};
+use std::cmp;
+use std::io::{self, BufRead, Read, Write};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -24,6 +25,9 @@ pub struct KcpIo {
     readiness: SetReadiness,
     last_update: Rc<RefCell<Instant>>,
     close_flag: Rc<RefCell<bool>>,
+    read_buf: Vec<u8>,
+    read_pos: usize,
+    read_cap: usize,
 }
 
 impl Drop for KcpIo {
@@ -63,6 +67,9 @@ impl KcpIo {
                readiness: readiness,
                last_update: elapsed,
                close_flag: close_flag,
+               read_buf: vec![0u8; 65535],
+               read_pos: 0,
+               read_cap: 0,
            })
     }
 
@@ -85,9 +92,30 @@ impl KcpIo {
     }
 }
 
+impl BufRead for KcpIo {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.read_pos >= self.read_cap {
+            let n = self.kcp.borrow_mut().recv(&mut self.read_buf)?;
+            self.read_pos = 0;
+            self.read_cap = n;
+        }
+
+        Ok(&self.read_buf[self.read_pos..self.read_cap])
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.read_pos = cmp::min(self.read_cap, self.read_pos + amt);
+    }
+}
+
 impl Read for KcpIo {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.kcp.borrow_mut().recv(buf)
+        let nread = {
+            let mut available = self.fill_buf()?;
+            available.read(buf)?
+        };
+        self.consume(nread);
+        Ok(nread)
     }
 }
 

@@ -15,6 +15,7 @@ extern crate log;
 
 use time::Timespec;
 
+pub use self::config::{KcpConfig, KcpNoDelayConfig};
 pub use self::listener::{Incoming, KcpListener};
 pub use self::stream::{KcpClientStream, KcpStream, KcpStreamNew};
 
@@ -23,6 +24,7 @@ mod session;
 mod kcp_io;
 mod stream;
 mod listener;
+mod config;
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {

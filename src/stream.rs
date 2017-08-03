@@ -10,6 +10,7 @@ use tokio_core::net::UdpSocket;
 use tokio_core::reactor::{Handle, PollEvented};
 use tokio_io::{AsyncRead, AsyncWrite};
 
+use config::KcpConfig;
 use kcp_io::{KcpIo, KcpIoMode};
 use skcp::{KcpOutput, SharedKcp};
 
@@ -54,6 +55,7 @@ impl Write for KcpClientStream {
 pub struct KcpStreamNew {
     addr: SocketAddr,
     handle: Handle,
+    config: KcpConfig,
 }
 
 impl Future for KcpStreamNew {
@@ -66,7 +68,8 @@ impl Future for KcpStreamNew {
         let udp = UdpSocket::bind(&local, &self.handle)?;
         let udp = Rc::new(udp);
 
-        let kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr));
+        let mut kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr));
+        self.config.apply_config(&mut kcp);
         let shared_kcp = SharedKcp::new(kcp);
 
         let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, KcpIoMode::Client)?;
@@ -92,9 +95,15 @@ impl KcpStream {
 
     /// Opens a KCP connection to a remote host.
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> KcpStreamNew {
+        KcpStream::connect_with_config(addr, handle, KcpConfig::default())
+    }
+
+    /// Opens a KCP connection to a remote host.
+    pub fn connect_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> KcpStreamNew {
         KcpStreamNew {
             addr: *addr,
             handle: handle.clone(),
+            config: config,
         }
     }
 

@@ -8,6 +8,7 @@ use kcp::{Kcp, get_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::{Handle, PollEvented};
 
+use config::KcpConfig;
 use kcp_io::{KcpIo, KcpIoMode};
 use session::KcpSessionUpdater;
 use skcp::{KcpOutput, SharedKcp};
@@ -19,6 +20,7 @@ pub struct KcpListener {
     sessions: KcpSessionUpdater,
     handle: Handle,
     session_expire: Duration,
+    config: KcpConfig,
 }
 
 /// An iterator that infinitely accepts connections on a `KcpListener`
@@ -39,15 +41,23 @@ impl KcpListener {
     /// Creates a new `KcpListener` which will be bound to the specific address.
     ///
     /// The returned listener is ready for accepting connections.
-    pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
+    pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
         UdpSocket::bind(addr, handle).map(|udp| {
-                                              KcpListener {
-                                                  udp: Rc::new(udp),
-                                                  sessions: KcpSessionUpdater::new(),
-                                                  handle: handle.clone(),
-                                                  session_expire: Duration::from_secs(90),
-                                              }
-                                          })
+            KcpListener {
+                udp: Rc::new(udp),
+                sessions: KcpSessionUpdater::new(),
+                handle: handle.clone(),
+                session_expire: Duration::from_secs(90),
+                config: config,
+            }
+        })
+    }
+
+    /// Creates a new `KcpListener` which will be bound to the specific address with default config.
+    ///
+    /// The returned listener is ready for accepting connections.
+    pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
+        KcpListener::bind_with_config(addr, handle, KcpConfig::default())
     }
 
     /// Returns the local socket address of this listener.
@@ -68,7 +78,8 @@ impl KcpListener {
 
             trace!("[ACPT] Accepted connection {}", addr);
 
-            let kcp = Kcp::new(get_conv(&buf), KcpOutput::new(self.udp.clone(), addr));
+            let mut kcp = Kcp::new(get_conv(&buf), KcpOutput::new(self.udp.clone(), addr));
+            self.config.apply_config(&mut kcp);
             let shared_kcp = SharedKcp::new(kcp);
 
             let io = KcpIo::new(shared_kcp,

@@ -11,7 +11,7 @@ repository = "https://github.com/Matrix-Zhang/tokio_kcp"
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
-kcp = "0.1"
+kcp = "0.3"
 mio = "0.6"
 rand = "0.3"
 time = "0.1"

@@ -1,4 +1,5 @@
 use std::io::{self, Read, Write};
+use std::mem;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 
@@ -9,7 +10,8 @@ use tokio_core::net::UdpSocket;
 use tokio_core::reactor::{Handle, PollEvented};
 use tokio_io::{AsyncRead, AsyncWrite};
 
-use kcp_io::KcpIo;
+use config::KcpConfig;
+use kcp_io::{KcpIo, KcpIoMode};
 use skcp::{KcpOutput, SharedKcp};
 
 /// KCP client for interacting with server
@@ -20,8 +22,11 @@ pub struct KcpClientStream {
 
 impl Read for KcpClientStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if let Ok((n, _)) = self.udp.recv_from(buf) {
-            self.io.get_mut().input_buf(&buf[..n])?;
+        let mut pkg: [u8; 65536] = unsafe { mem::zeroed() };
+
+        if let Ok((n, addr)) = self.udp.recv_from(&mut pkg) {
+            trace!("[RECV] UDP {} size={} {:?}", addr, n, &pkg[..n]);
+            self.io.get_mut().input_buf(&pkg[..n])?;
         }
         self.io.read(buf)
     }
@@ -50,6 +55,7 @@ impl Write for KcpClientStream {
 pub struct KcpStreamNew {
     addr: SocketAddr,
     handle: Handle,
+    config: KcpConfig,
 }
 
 impl Future for KcpStreamNew {
@@ -62,10 +68,11 @@ impl Future for KcpStreamNew {
         let udp = UdpSocket::bind(&local, &self.handle)?;
         let udp = Rc::new(udp);
 
-        let kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr));
+        let mut kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr));
+        self.config.apply_config(&mut kcp);
         let shared_kcp = SharedKcp::new(kcp);
 
-        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None)?;
+        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, KcpIoMode::Client)?;
         let io = PollEvented::new(io, &self.handle)?;
         let stream = KcpClientStream { udp: udp, io: io };
         Ok(Async::Ready(stream))
@@ -80,12 +87,6 @@ pub struct KcpStream {
     io: PollEvented<KcpIo>,
 }
 
-impl Drop for KcpStream {
-    fn drop(&mut self) {
-        println!("DROP");
-    }
-}
-
 impl KcpStream {
     #[doc(hidden)]
     pub fn new(io: PollEvented<KcpIo>) -> KcpStream {
@@ -94,9 +95,15 @@ impl KcpStream {
 
     /// Opens a KCP connection to a remote host.
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> KcpStreamNew {
+        KcpStream::connect_with_config(addr, handle, KcpConfig::default())
+    }
+
+    /// Opens a KCP connection to a remote host.
+    pub fn connect_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> KcpStreamNew {
         KcpStreamNew {
             addr: *addr,
             handle: handle.clone(),
+            config: config,
         }
     }
 

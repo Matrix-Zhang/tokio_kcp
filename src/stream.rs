@@ -38,17 +38,17 @@ impl KcpStream {
 
     /// Opens a KCP connection to a remote host.
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpStream> {
-        KcpStream::connect_with_config(addr, handle, KcpConfig::default())
+        KcpStream::connect_with_config(addr, handle, &KcpConfig::default())
     }
 
     /// Opens a KCP connection to a remote host.
-    pub fn connect_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpStream> {
+    pub fn connect_with_config(addr: &SocketAddr, handle: &Handle, config: &KcpConfig) -> io::Result<KcpStream> {
         let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
         let udp = UdpSocket::bind(&local, &handle)?;
         let udp = Rc::new(udp);
 
-        let kcp = SharedKcp::new_with_config(&config, rand::random::<u32>(), udp.clone(), *addr, handle);
+        let kcp = SharedKcp::new_with_config(config, rand::random::<u32>(), udp.clone(), *addr, handle);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,

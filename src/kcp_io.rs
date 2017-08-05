@@ -24,6 +24,7 @@ struct KcpIo {
 impl KcpIo {
     pub fn new(kcp: SharedKcp) -> KcpIo {
         let mtu = kcp.mtu();
+        trace!("[INIT] KcpIo mtu {}", mtu);
         let mut buf = BytesMut::with_capacity(mtu);
         unsafe {
             buf.set_len(mtu);

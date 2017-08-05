@@ -5,19 +5,12 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use bytes::BytesMut;
-use bytes::buf::FromBuf;
 use futures::{Future, Stream};
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::{Handle, Timeout};
 
 use session::{KcpSessionUpdater, SharedKcpSession};
 use skcp::SharedKcp;
-
-pub enum KcpIoMode {
-    Client,
-    Server(Duration),
-}
 
 pub struct KcpIo {
     kcp: SharedKcp,
@@ -42,7 +35,7 @@ impl KcpIo {
                addr: SocketAddr,
                handle: &Handle,
                owner: Option<KcpSessionUpdater>,
-               mode: KcpIoMode)
+               expire_dur: Duration)
                -> io::Result<KcpIo> {
         let (registration, readiness) = Registration::new2();
         let timer = Timeout::new_at(Instant::now(), handle)?;
@@ -56,7 +49,7 @@ impl KcpIo {
                                             addr,
                                             owner,
                                             close_flag.clone(),
-                                            mode)?;
+                                            expire_dur)?;
         handle.spawn(session.for_each(|_| Ok(())).map_err(|err| {
                                                               error!("Failed to update KCP session: err: {:?}", err);
                                                           }));
@@ -74,20 +67,17 @@ impl KcpIo {
     }
 
     pub fn input_buf(&mut self, buf: &[u8]) -> io::Result<()> {
-        {
+        let n = {
             let mut last_update = self.last_update.borrow_mut();
             *last_update = Instant::now();
             let mut kcp = self.kcp.borrow_mut();
-            kcp.input(&mut BytesMut::from_buf(buf))?;
-        }
-        self.set_readable()
+            kcp.input(buf)?
+        };
+        self.set_readable()?;
+        Ok(n)
     }
 
-    pub fn set_writable(&mut self) -> io::Result<()> {
-        self.readiness.set_readiness(Ready::writable())
-    }
-
-    pub fn set_readable(&mut self) -> io::Result<()> {
+    fn set_readable(&mut self) -> io::Result<()> {
         self.readiness.set_readiness(Ready::readable())
     }
 }

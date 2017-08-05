@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use kcp::Kcp;
 use skcp::KcpOutput;
 
 /// Kcp NoDelay Config
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct KcpNoDelayConfig {
     /// Enable nodelay
     pub nodelay: bool,
@@ -43,7 +45,7 @@ impl KcpNoDelayConfig {
 }
 
 /// Kcp Config
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct KcpConfig {
     /// Max Transmission Unit
     pub mtu: Option<usize>,
@@ -55,6 +57,8 @@ pub struct KcpConfig {
     pub wnd_size: Option<u32>,
     /// Minimal resend timeout
     pub rx_minrto: Option<u32>,
+    /// Session expire duration, default is 90 seconds
+    pub session_expire: Option<Duration>,
 }
 
 impl KcpConfig {

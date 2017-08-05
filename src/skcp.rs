@@ -1,8 +1,9 @@
-use std::cell::{self, RefCell};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, ErrorKind, Write};
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use bytes::buf::FromBuf;
@@ -11,6 +12,8 @@ use futures::task::{self, Task};
 use kcp::Kcp;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
+
+use config::KcpConfig;
 
 struct KcpOutputInner {
     udp: Rc<UdpSocket>,
@@ -140,21 +143,114 @@ impl Write for KcpOutput {
     }
 }
 
+struct KcpCell {
+    kcp: Kcp<KcpOutput>,
+    last_update: Instant,
+    is_closed: bool,
+}
+
 #[derive(Clone)]
 pub struct SharedKcp {
-    kcp: Rc<RefCell<Kcp<KcpOutput>>>,
+    inner: Rc<RefCell<KcpCell>>,
 }
 
 impl SharedKcp {
-    pub fn new(kcp: Kcp<KcpOutput>) -> SharedKcp {
-        SharedKcp { kcp: Rc::new(RefCell::new(kcp)) }
+    pub fn new_with_config(c: &KcpConfig,
+                           conv: u32,
+                           udp: Rc<UdpSocket>,
+                           peer: SocketAddr,
+                           handle: &Handle)
+                           -> SharedKcp {
+        let output = KcpOutput::new(udp, peer, handle);
+        let mut kcp = Kcp::new(conv, output);
+        c.apply_config(&mut kcp);
+
+        SharedKcp {
+            inner: Rc::new(RefCell::new(KcpCell {
+                                            kcp: kcp,
+                                            last_update: Instant::now(),
+                                            is_closed: false,
+                                        })),
+        }
     }
 
-    pub fn borrow_mut<'a>(&'a mut self) -> cell::RefMut<'a, Kcp<KcpOutput>> {
-        self.kcp.borrow_mut()
+    /// Call every time you got data from transmission
+    pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner.kcp.input(buf)?;
+        inner.last_update = Instant::now();
+        Ok(())
     }
 
-    pub fn borrow<'a>(&'a self) -> cell::Ref<'a, Kcp<KcpOutput>> {
-        self.kcp.borrow()
+    /// Call if you want to send some data
+    pub fn send(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut inner = self.inner.borrow_mut();
+        let n = inner.kcp.send(buf)?;
+        inner.last_update = Instant::now();
+        Ok(n)
+    }
+
+    /// Call if you want to get some data
+    /// Always call right after input
+    pub fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut inner = self.inner.borrow_mut();
+        let n = inner.kcp.recv(buf)?;
+        inner.last_update = Instant::now();
+        Ok(n)
+    }
+
+    /// Call if you want to flush all pending data in queue
+    pub fn flush(&mut self) -> io::Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner.kcp.flush()?;
+        inner.last_update = Instant::now();
+        Ok(())
+    }
+
+    /// Tell me how long this session have no interaction
+    pub fn elapsed(&self) -> Duration {
+        let inner = self.inner.borrow();
+        inner.last_update.elapsed()
+    }
+
+    /// Make this session expire, all read apis will return 0 (EOF)
+    /// It will flush the buffer when it is called
+    pub fn set_expired(&mut self) -> io::Result<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner.kcp.expired();
+        inner.kcp.flush()
+    }
+
+    /// Call in every tick
+    /// Returns when to call this function again
+    pub fn update(&mut self) -> io::Result<Instant> {
+        let mut inner = self.inner.borrow_mut();
+        inner.kcp.update(::current())?;
+        let next = inner.kcp.check(::current());
+        Ok(Instant::now() + Duration::from_millis(next as u64))
+    }
+
+    /// Check if send queue is empty
+    pub fn has_waitsnd(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.kcp.waitsnd() != 0
+    }
+
+    /// Get mtu
+    pub fn mtu(&self) -> usize {
+        let inner = self.inner.borrow();
+        inner.kcp.mtu()
+    }
+
+    /// Set is close
+    pub fn close(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.is_closed = true;
+    }
+
+    /// Check if it is closed
+    pub fn is_closed(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.is_closed
     }
 }

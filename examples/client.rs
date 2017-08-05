@@ -28,19 +28,22 @@ fn main() {
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
-    let kcp = KcpStream::connect(&addr, &handle);
     let (stdin_tx, stdin_rx) = mpsc::channel(0);
     thread::spawn(|| read_stdin(stdin_tx));
+
     let stdin_rx = stdin_rx.map_err(|_| panic!());
     let mut stdout = io::stdout();
-    let client = kcp.and_then(|stream| {
+
+    let client = futures::lazy(|| KcpStream::connect(&addr, &handle)).and_then(|stream| {
         let (sink, stream) = stream.framed(Bytes).split();
         let send_stdin = stdin_rx.forward(sink);
         let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));
 
         send_stdin.map(|_| ())
                   .join(write_stdout.map(|_| ()))
-                  .then(|_| Ok(()))
+                  .map_err(|err| {
+                               panic!("Failed to handle stream, err: {:?}", err);
+                           })
     });
 
     core.run(client).unwrap();

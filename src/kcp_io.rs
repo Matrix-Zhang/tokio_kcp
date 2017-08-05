@@ -5,8 +5,8 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 
-use bytes::BytesMut;
 use futures::{Future, Stream};
+use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::Handle;
 
@@ -16,7 +16,7 @@ use skcp::SharedKcp;
 /// Base Io object for KCP
 struct KcpIo {
     kcp: SharedKcp,
-    read_buf: BytesMut,
+    read_buf: Vec<u8>,
     read_pos: usize,
     read_cap: usize,
 }
@@ -25,7 +25,7 @@ impl KcpIo {
     pub fn new(kcp: SharedKcp) -> KcpIo {
         let mtu = kcp.mtu();
         trace!("[INIT] KcpIo mtu {}", mtu);
-        let mut buf = BytesMut::with_capacity(mtu);
+        let mut buf = Vec::with_capacity(mtu);
         unsafe {
             buf.set_len(mtu);
         }
@@ -40,7 +40,7 @@ impl KcpIo {
 
     /// Call everytime you got data from transmission
     pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.kcp.input(buf)
+        self.kcp.input(buf).map_err(From::from)
     }
 
     /// MTU
@@ -58,10 +58,27 @@ impl KcpIo {
 impl BufRead for KcpIo {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.read_pos >= self.read_cap {
-            let n = self.kcp.recv(&mut self.read_buf)?;
-            self.read_pos = 0;
-            self.read_cap = n;
-            trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
+            loop {
+                let n = match self.kcp.recv(&mut self.read_buf) {
+                    Ok(n) => n,
+                    Err(KcpError::UserBufTooSmall) => {
+                        let orig = self.read_buf.len();
+                        let incr = (orig as f64 * 1.5) as usize;
+                        trace!("[RECV] kcp.recv buf too small, {} -> {}", orig, incr);
+                        self.read_buf.resize(incr, 0);
+                        continue;
+                    }
+                    Err(err) => {
+                        return Err(From::from(err));
+                    }
+                };
+
+                self.read_pos = 0;
+                self.read_cap = n;
+                trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
+
+                break;
+            }
         }
 
         Ok(&self.read_buf[self.read_pos..self.read_cap])

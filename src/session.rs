@@ -200,7 +200,6 @@ impl Stream for KcpServerSession {
             Ok(Async::Ready(Some(x))) => Ok(Async::Ready(Some(x))),
             Ok(Async::Ready(None)) => {
                 // Session is closed, remove itself from updater
-                let sess = self.session.borrow();
                 self.updater.remove_by_addr(sess.addr());
                 Ok(Async::Ready(None))
             }

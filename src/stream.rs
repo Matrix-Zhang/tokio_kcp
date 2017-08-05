@@ -85,7 +85,10 @@ impl Read for KcpStream {
                     n
                 }
                 // Loop continue, maybe we received an ACK packet
-                Err(ref err) if err.kind() == ErrorKind::WouldBlock => continue,
+                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                    trace!("[RECV] Evented.read not ready yet");
+                    continue;
+                }
                 Err(err) => return Err(err),
             };
 

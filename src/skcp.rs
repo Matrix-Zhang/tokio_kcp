@@ -9,7 +9,7 @@ use bytes::Bytes;
 use bytes::buf::FromBuf;
 use futures::{Async, Future, Poll};
 use futures::task::{self, Task};
-use kcp::Kcp;
+use kcp::{Kcp, KcpResult};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
@@ -175,7 +175,7 @@ impl SharedKcp {
     }
 
     /// Call every time you got data from transmission
-    pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
+    pub fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
         inner.kcp.input(buf)?;
         inner.last_update = Instant::now();
@@ -183,7 +183,7 @@ impl SharedKcp {
     }
 
     /// Call if you want to send some data
-    pub fn send(&mut self, buf: &[u8]) -> io::Result<usize> {
+    pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
         let n = inner.kcp.send(buf)?;
         inner.last_update = Instant::now();
@@ -192,7 +192,7 @@ impl SharedKcp {
 
     /// Call if you want to get some data
     /// Always call right after input
-    pub fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
         let n = inner.kcp.recv(buf)?;
         inner.last_update = Instant::now();
@@ -200,7 +200,7 @@ impl SharedKcp {
     }
 
     /// Call if you want to flush all pending data in queue
-    pub fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
         inner.kcp.flush()?;
         inner.last_update = Instant::now();
@@ -215,7 +215,7 @@ impl SharedKcp {
 
     /// Make this session expire, all read apis will return 0 (EOF)
     /// It will flush the buffer when it is called
-    pub fn set_expired(&mut self) -> io::Result<()> {
+    pub fn set_expired(&mut self) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
         inner.kcp.expired();
         inner.kcp.flush()
@@ -223,7 +223,7 @@ impl SharedKcp {
 
     /// Call in every tick
     /// Returns when to call this function again
-    pub fn update(&mut self) -> io::Result<Instant> {
+    pub fn update(&mut self) -> KcpResult<Instant> {
         let mut inner = self.inner.borrow_mut();
         inner.kcp.update(::current())?;
         let next = inner.kcp.check(::current());

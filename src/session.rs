@@ -149,6 +149,11 @@ impl KcpSession {
 
         Ok(Async::Ready(Some(())))
     }
+
+    /// Check if it is readable
+    pub fn can_read(&self) -> bool {
+        self.kcp.can_read()
+    }
 }
 
 /// Server accepted session
@@ -185,7 +190,11 @@ impl KcpServerSession {
 
         // Now we have put data into KCP
         // So it is time to try `recv`. But it may failed, because the inputted data may be an ACK packet.
-        self.readiness.set_readiness(Ready::readable())
+        if sess.can_read() {
+            self.readiness.set_readiness(Ready::readable())
+        } else {
+            Ok(())
+        }
     }
 }
 

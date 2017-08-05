@@ -253,4 +253,10 @@ impl SharedKcp {
         let inner = self.inner.borrow();
         inner.is_closed
     }
+
+    /// Check if it can read
+    pub fn can_read(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.kcp.peeksize().unwrap_or(0) != 0
+    }
 }

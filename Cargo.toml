@@ -1,23 +1,24 @@
 [package]
 name = "tokio_kcp"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
 readme = "README.md"
 keywords = ["kcp", "udp", "reliable", "tokio"]
+documentation = "https://docs.rs/tokio_kcp"
 repository = "https://github.com/Matrix-Zhang/tokio_kcp"
 
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
 kcp = "0.3"
+log = "0.3"
 mio = "0.6"
 rand = "0.3"
 time = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
-log = "0.3"
 
 [dev-dependencies]
 env_logger = "0.4.3"

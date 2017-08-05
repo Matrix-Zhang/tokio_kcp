@@ -1,6 +1,6 @@
 use std::cell::{self, RefCell};
 use std::collections::VecDeque;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Write};
 use std::net::SocketAddr;
 use std::rc::Rc;
 
@@ -45,6 +45,26 @@ impl KcpOutputInner {
     fn close(&mut self) {
         self.is_finished = true;
         self.notify();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pkt_queue.is_empty()
+    }
+
+    fn send_or_push(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.is_empty() {
+            match self.udp.send_to(buf, &self.peer) {
+                Ok(n) => {
+                    trace!("[SEND] UDP {} size={} {:?}", self.peer, buf.len(), ::debug::BsDebug(buf));
+                    return Ok(n);
+                }
+                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
+                Err(err) => return Err(err),
+            }
+        }
+
+        self.push_packet(Bytes::from_buf(buf));
+        Ok(buf.len())
     }
 }
 
@@ -109,8 +129,7 @@ impl KcpOutput {
 impl Write for KcpOutput {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut inner = self.inner.borrow_mut();
-        inner.push_packet(Bytes::from_buf(buf));
-        Ok(buf.len())
+        inner.send_or_push(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {

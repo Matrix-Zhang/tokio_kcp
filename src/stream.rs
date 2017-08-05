@@ -1,4 +1,4 @@
-use std::io::{self, ErrorKind, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::time::Duration;

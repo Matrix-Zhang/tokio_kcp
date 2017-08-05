@@ -67,14 +67,14 @@ impl KcpIo {
     }
 
     pub fn input_buf(&mut self, buf: &[u8]) -> io::Result<()> {
-        let n = {
+        {
             let mut last_update = self.last_update.borrow_mut();
             *last_update = Instant::now();
             let mut kcp = self.kcp.borrow_mut();
-            kcp.input(buf)?
-        };
-        self.set_readable()?;
-        Ok(n)
+            kcp.input(buf)?;
+            trace!("[INPUT] KcpIo.input size={}", buf.len());
+        }
+        self.set_readable()
     }
 
     fn set_readable(&mut self) -> io::Result<()> {
@@ -90,9 +90,16 @@ impl KcpIo {
 impl BufRead for KcpIo {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.read_pos >= self.read_cap {
-            let n = self.kcp.borrow_mut().recv(&mut self.read_buf)?;
+            let n = match self.kcp.borrow_mut().recv(&mut self.read_buf) {
+                Ok(n) => n,
+                Err(err) => {
+                    trace!("[RECV] kcp.recv err {:?}", err);
+                    return Err(err);
+                }
+            };
             self.read_pos = 0;
             self.read_cap = n;
+            trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
         }
 
         Ok(&self.read_buf[self.read_pos..self.read_cap])
@@ -110,6 +117,7 @@ impl Read for KcpIo {
             available.read(buf)?
         };
         self.consume(nread);
+        trace!("[RECV] KcpIo.read size={} {:?}", nread, ::debug::BsDebug(&buf[..nread]));
         Ok(nread)
     }
 }
@@ -117,12 +125,16 @@ impl Read for KcpIo {
 impl Write for KcpIo {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut kcp = self.kcp.borrow_mut();
-        kcp.send(buf)
+        let n = kcp.send(buf)?;
+        trace!("[SEND] Written {} bytes", n);
+        Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         let mut kcp = self.kcp.borrow_mut();
-        kcp.flush()
+        kcp.flush()?;
+        trace!("[SEND] Flushed KCP buffer");
+        Ok(())
     }
 }
 

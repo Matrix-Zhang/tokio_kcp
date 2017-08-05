@@ -172,7 +172,6 @@ impl SharedKcpSession {
     fn update_kcp(&mut self) -> io::Result<()> {
         let mut inner = self.borrow_mut();
         let curr = ::current();
-        let now = Instant::now();
 
         let next_dur = {
             let mut kcp = inner.kcp.borrow_mut();
@@ -180,6 +179,7 @@ impl SharedKcpSession {
             Duration::from_millis(kcp.check(curr) as u64)
         };
 
+        let now = Instant::now();
         let update = now + next_dur;
         inner.timer.reset(update);
 

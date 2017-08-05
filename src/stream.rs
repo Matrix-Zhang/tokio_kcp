@@ -29,13 +29,13 @@ impl Read for KcpClientStream {
                 trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
                 self.io.get_mut().input_buf(&self.buf[..n])?;
             }
-            Err(err) => {
-                if !(err.kind() == ErrorKind::WouldBlock && self.io.get_ref().can_read()?) {
-                    return Err(err);
-                }
-            }
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
+            Err(err) => return Err(err),
         }
-        self.io.read(buf)
+
+        let n = self.io.read(buf)?;
+        trace!("[RECV] Evented.read size={} {:?}", n, ::debug::BsDebug(&buf[..n]));
+        Ok(n)
     }
 }
 

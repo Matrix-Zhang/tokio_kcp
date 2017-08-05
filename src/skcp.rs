@@ -55,7 +55,10 @@ impl KcpOutputInner {
         if self.is_empty() {
             match self.udp.send_to(buf, &self.peer) {
                 Ok(n) => {
-                    trace!("[SEND] UDP {} size={} {:?}", self.peer, buf.len(), ::debug::BsDebug(buf));
+                    trace!("[SEND] Immediately UDP {} size={} {:?}", self.peer, buf.len(), ::debug::BsDebug(buf));
+                    if n != buf.len() {
+                        error!("[SEND] Immediately Sent size={}, but packet is size={}", n, buf.len());
+                    }
                     return Ok(n);
                 }
                 Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
@@ -83,9 +86,9 @@ impl Future for KcpOutputQueue {
             {
                 let pkt = &inner.pkt_queue[0];
                 let n = try_nb!(inner.udp.send_to(&pkt, &inner.peer));
-                trace!("[SEND] UDP {} size={} {:?}", inner.peer, pkt.len(), pkt);
+                trace!("[SEND] Delayed UDP {} size={} {:?}", inner.peer, pkt.len(), pkt);
                 if n != pkt.len() {
-                    error!("[SEND] Sent {} bytes, but packet is {} bytes", n, pkt.len());
+                    error!("[SEND] Delayed Sent size={}, but packet is size={}", n, pkt.len());
                 }
             }
 

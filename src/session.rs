@@ -1,6 +1,7 @@
 use std::cell::{self, RefCell};
 use std::collections::HashMap;
-use std::io;
+use std::fmt::{self, Debug};
+use std::io::{self, ErrorKind};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -9,12 +10,18 @@ use futures::{Async, Future, Poll, Stream};
 use mio::{Ready, SetReadiness};
 use tokio_core::reactor::Timeout;
 
-use kcp_io::KcpIoMode;
 use skcp::SharedKcp;
 
 #[derive(Clone)]
 pub struct KcpSessionUpdater {
     sessions: Rc<RefCell<HashMap<SocketAddr, SharedKcpSession>>>,
+}
+
+impl Debug for KcpSessionUpdater {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let hmap = self.sessions.borrow();
+        write!(f, "KcpSessionUpdater {{ sessions: {:?} }}", &*hmap)
+    }
 }
 
 impl KcpSessionUpdater {
@@ -57,13 +64,17 @@ pub struct KcpSession {
     owner: Option<KcpSessionUpdater>,
     addr: SocketAddr,
     close_flag: Rc<RefCell<bool>>,
-    mode: KcpIoMode,
+    expire_dur: Duration,
 }
 
 impl KcpSession {
     fn set_last_update(&mut self, t: Instant) {
         let mut u = self.last_update.borrow_mut();
         *u = t;
+    }
+
+    fn set_readable(&mut self) -> io::Result<()> {
+        self.readiness.set_readiness(Ready::readable())
     }
 }
 
@@ -80,6 +91,12 @@ pub struct SharedKcpSession {
     inner: Rc<RefCell<KcpSession>>,
 }
 
+impl Debug for SharedKcpSession {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "KcpSession {{ .. }}")
+    }
+}
+
 impl SharedKcpSession {
     pub fn new(kcp: SharedKcp,
                timer: Timeout,
@@ -88,7 +105,7 @@ impl SharedKcpSession {
                addr: SocketAddr,
                mut owner: Option<KcpSessionUpdater>,
                close_flag: Rc<RefCell<bool>>,
-               mode: KcpIoMode)
+               expire_dur: Duration)
                -> io::Result<SharedKcpSession> {
         let inner = KcpSession {
             kcp: kcp,
@@ -98,7 +115,7 @@ impl SharedKcpSession {
             owner: owner.clone(),
             addr: addr,
             close_flag: close_flag,
-            mode: mode,
+            expire_dur: expire_dur,
         };
 
         let mut session = SharedKcpSession { inner: Rc::new(RefCell::new(inner)) };
@@ -139,19 +156,14 @@ impl SharedKcpSession {
             kcp.input(buf)?;
         }
 
-        inner.readiness.set_readiness(Ready::readable())?;
-
-        Ok(())
+        inner.set_readable()
     }
 
     #[inline]
     fn is_expired(&self) -> bool {
         let dur = {
             let inner = self.borrow();
-            match inner.mode {
-                KcpIoMode::Client => return false,
-                KcpIoMode::Server(dur) => dur,
-            }
+            inner.expire_dur
         };
 
         self.elapsed() >= dur
@@ -159,7 +171,6 @@ impl SharedKcpSession {
 
     fn update_kcp(&mut self) -> io::Result<()> {
         let mut inner = self.borrow_mut();
-
         let curr = ::current();
         let now = Instant::now();
 
@@ -171,6 +182,20 @@ impl SharedKcpSession {
 
         let update = now + next_dur;
         inner.timer.reset(update);
+
+        let readable_size = {
+            let kcp = inner.kcp.borrow();
+            match kcp.peeksize() {
+                Ok(n) => n,
+                Err(ref err) if err.kind() == ErrorKind::WouldBlock => 0,
+                Err(err) => return Err(err),
+            }
+        };
+
+        if readable_size > 0 {
+            inner.set_readable()?;
+        }
+
         Ok(())
     }
 
@@ -178,9 +203,10 @@ impl SharedKcpSession {
         let mut inner = self.borrow_mut();
         {
             let mut kcp = inner.kcp.borrow_mut();
+            kcp.flush()?;
             kcp.expired();
         }
-        inner.readiness.set_readiness(Ready::readable())?;
+        inner.set_readable()?;
         inner.try_remove_self();
 
         Ok(())
@@ -198,20 +224,29 @@ impl Stream for SharedKcpSession {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Option<()>, io::Error> {
-        if self.is_closed() {
-            trace!("[SESS] KcpSession {} closed", self.borrow().addr);
-            return Ok(Async::Ready(None));
-        }
-
         let _ = try_ready!(self.poll_timer());
 
         if !self.is_expired() {
             self.update_kcp()?;
-            Ok(Async::Ready(Some(())))
         } else {
             trace!("[SESS] KcpSession {} expired", self.borrow().addr);
             self.expire_kcp()?;
-            Ok(Async::Ready(None))
+            return Ok(Async::Ready(None));
         }
+
+        if self.is_closed() {
+            let inner = self.borrow();
+            let waitsnd = {
+                let kcp = inner.kcp.borrow();
+                kcp.waitsnd()
+            };
+
+            if waitsnd == 0 {
+                trace!("[SESS] KcpSession {} closed", inner.addr);
+                return Ok(Async::Ready(None));
+            }
+        }
+
+        Ok(Async::Ready(Some(())))
     }
 }

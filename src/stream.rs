@@ -1,8 +1,9 @@
-use std::io::{self, Read, Write};
-use std::mem;
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::rc::Rc;
+use std::time::Duration;
 
+use bytes::BytesMut;
 use futures::{Async, Future, Poll};
 use kcp::Kcp;
 use rand;
@@ -11,22 +12,21 @@ use tokio_core::reactor::{Handle, PollEvented};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use config::KcpConfig;
-use kcp_io::{KcpIo, KcpIoMode};
+use kcp_io::KcpIo;
 use skcp::{KcpOutput, SharedKcp};
 
 /// KCP client for interacting with server
 pub struct KcpClientStream {
     udp: Rc<UdpSocket>,
     io: PollEvented<KcpIo>,
+    buf: BytesMut,
 }
 
 impl Read for KcpClientStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut pkg: [u8; 65536] = unsafe { mem::zeroed() };
-
-        if let Ok((n, addr)) = self.udp.recv_from(&mut pkg) {
-            trace!("[RECV] UDP {} size={} {:?}", addr, n, &pkg[..n]);
-            self.io.get_mut().input_buf(&pkg[..n])?;
+        if let Ok((n, addr)) = self.udp.recv_from(&mut self.buf) {
+            trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
+            self.io.get_mut().input_buf(&self.buf[..n])?;
         }
         self.io.read(buf)
     }
@@ -42,8 +42,7 @@ impl AsyncWrite for KcpClientStream {
 
 impl Write for KcpClientStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.io.get_mut().set_writable()?;
-        self.io.write(buf)
+        self.io.get_mut().write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -68,13 +67,28 @@ impl Future for KcpStreamNew {
         let udp = UdpSocket::bind(&local, &self.handle)?;
         let udp = Rc::new(udp);
 
-        let mut kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr));
+        let mut kcp = Kcp::new(rand::random::<u32>(), KcpOutput::new(udp.clone(), self.addr, &self.handle));
         self.config.apply_config(&mut kcp);
         let shared_kcp = SharedKcp::new(kcp);
 
-        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, KcpIoMode::Client)?;
+        let sess_exp = match self.config.session_expire {
+            Some(dur) => dur,
+            None => Duration::from_secs(90),
+        };
+
+        let mtu = self.config.mtu.unwrap_or(1500);
+        let mut buf = BytesMut::with_capacity(mtu);
+        unsafe {
+            buf.set_len(mtu);
+        }
+
+        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, sess_exp)?;
         let io = PollEvented::new(io, &self.handle)?;
-        let stream = KcpClientStream { udp: udp, io: io };
+        let stream = KcpClientStream {
+            udp: udp,
+            io: io,
+            buf: buf,
+        };
         Ok(Async::Ready(stream))
     }
 }
@@ -122,12 +136,11 @@ impl Read for KcpStream {
 
 impl Write for KcpStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.io.get_mut().set_writable()?;
-        self.io.write(buf)
+        self.io.get_mut().write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.io.flush()
+        self.io.get_mut().flush()
     }
 }
 

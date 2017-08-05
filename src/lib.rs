@@ -25,6 +25,7 @@ mod kcp_io;
 mod stream;
 mod listener;
 mod config;
+mod debug;
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {

@@ -201,6 +201,9 @@ impl Stream for KcpServerSession {
             Ok(Async::Ready(None)) => {
                 // Session is closed, remove itself from updater
                 self.updater.remove_by_addr(sess.addr());
+
+                // Awake pending reads
+                self.readiness.set_readiness(Ready::readable())?;
                 Ok(Async::Ready(None))
             }
         }

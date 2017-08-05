@@ -89,7 +89,7 @@ impl Future for KcpStreamNew {
             buf.set_len(mtu);
         }
 
-        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, sess_exp)?;
+        let io = KcpIo::new(shared_kcp, self.addr, &self.handle, None, mtu, sess_exp)?;
         let io = PollEvented::new(io, &self.handle)?;
         let stream = KcpClientStream {
             udp: udp,

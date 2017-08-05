@@ -90,7 +90,7 @@ impl KcpListener {
                 None => Duration::from_secs(90),
             };
 
-            let io = KcpIo::new(shared_kcp, addr, &self.handle, Some(self.sessions.clone()), sess_exp)?;
+            let io = KcpIo::new(shared_kcp, addr, &self.handle, Some(self.sessions.clone()), mtu, sess_exp)?;
             let io = PollEvented::new(io, &self.handle)?;
 
             let mut stream = KcpStream::new(io);

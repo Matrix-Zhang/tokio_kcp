@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use bytes::BytesMut;
 use futures::{Future, Stream};
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::{Handle, Timeout};
@@ -18,7 +19,7 @@ pub struct KcpIo {
     readiness: SetReadiness,
     last_update: Rc<RefCell<Instant>>,
     close_flag: Rc<RefCell<bool>>,
-    read_buf: Vec<u8>,
+    read_buf: BytesMut,
     read_pos: usize,
     read_cap: usize,
 }
@@ -35,6 +36,7 @@ impl KcpIo {
                addr: SocketAddr,
                handle: &Handle,
                owner: Option<KcpSessionUpdater>,
+               mtu: usize,
                expire_dur: Duration)
                -> io::Result<KcpIo> {
         let (registration, readiness) = Registration::new2();
@@ -54,13 +56,18 @@ impl KcpIo {
                                                               error!("Failed to update KCP session: err: {:?}", err);
                                                           }));
 
+        let mut buf = BytesMut::with_capacity(mtu);
+        unsafe {
+            buf.set_len(mtu);
+        }
+
         Ok(KcpIo {
                kcp: shared_kcp,
                registration: registration,
                readiness: readiness,
                last_update: elapsed,
                close_flag: close_flag,
-               read_buf: vec![0u8; 65535],
+               read_buf: buf,
                read_pos: 0,
                read_cap: 0,
            })

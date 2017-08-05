@@ -80,6 +80,11 @@ impl KcpIo {
     fn set_readable(&mut self) -> io::Result<()> {
         self.readiness.set_readiness(Ready::readable())
     }
+
+    pub fn can_read(&self) -> io::Result<bool> {
+        let kcp = self.kcp.borrow();
+        kcp.peeksize().map(|n| n != 0)
+    }
 }
 
 impl BufRead for KcpIo {

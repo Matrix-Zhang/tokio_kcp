@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::time::Duration;
@@ -24,9 +24,16 @@ pub struct KcpClientStream {
 
 impl Read for KcpClientStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if let Ok((n, addr)) = self.udp.recv_from(&mut self.buf) {
-            trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
-            self.io.get_mut().input_buf(&self.buf[..n])?;
+        match self.udp.recv_from(&mut self.buf) {
+            Ok((n, addr)) => {
+                trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
+                self.io.get_mut().input_buf(&self.buf[..n])?;
+            }
+            Err(err) => {
+                if !(err.kind() == ErrorKind::WouldBlock && self.io.get_ref().can_read()?) {
+                    return Err(err);
+                }
+            }
         }
         self.io.read(buf)
     }

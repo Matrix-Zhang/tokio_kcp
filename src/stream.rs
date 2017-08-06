@@ -58,44 +58,42 @@ impl KcpStream {
         let io = ClientKcpIo::new(kcp, *addr, sess_exp, &handle)?;
         Ok(KcpStream::new(udp, io))
     }
+
+    fn recv_from(&mut self) -> io::Result<()> {
+        match self.udp.recv_from(&mut self.buf) {
+            Ok((n, addr)) => {
+                trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
+                self.io.input(&self.buf[..n])?;
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn io_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.io.read(buf) {
+            Ok(n) => {
+                trace!("[RECV] Evented.read size={}", n);
+                Ok(n)
+            }
+            Err(err) => Err(err),
+        }
+    }
 }
 
 impl Read for KcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        for lp in 1.. {
-            match self.udp.recv_from(&mut self.buf) {
-                Ok((n, addr)) => {
-                    trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
-                    self.io.input(&self.buf[..n])?;
-                }
-                Err(err) => {
-                    if err.kind() == ErrorKind::WouldBlock {
-                        if lp > 1 {
-                            return Err(err);
-                        }
-                    } else {
-                        return Err(err);
-                    }
-                }
+        // loop until we got something
+        loop {
+            match self.io_read(buf) {
+                Ok(n) => return Ok(n),
+                // Loop continue, maybe we have received an ACK packet
+                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
+                Err(err) => return Err(err),
             }
 
-            let n = match self.io.read(buf) {
-                Ok(n) => {
-                    trace!("[RECV] Evented.read size={}", n);
-                    n
-                }
-                // Loop continue, maybe we received an ACK packet
-                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
-                    trace!("[RECV] Evented.read not ready yet");
-                    continue;
-                }
-                Err(err) => return Err(err),
-            };
-
-            return Ok(n);
+            self.recv_from()?;
         }
-
-        unreachable!()
     }
 }
 

@@ -94,8 +94,8 @@ impl KcpSession {
 
     /// Called when you received a packet
     pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.kcp.input(buf)?;
         trace!("[SESS] input size={} addr={} {:?}", buf.len(), self.addr, ::debug::BsDebug(buf));
+        self.kcp.input(buf)?;
         Ok(())
     }
 

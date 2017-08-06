@@ -81,7 +81,7 @@ impl Read for KcpStream {
 
             let n = match self.io.read(buf) {
                 Ok(n) => {
-                    trace!("[RECV] Evented.read size={} {:?}", n, ::debug::BsDebug(&buf[..n]));
+                    trace!("[RECV] Evented.read size={}", n);
                     n
                 }
                 // Loop continue, maybe we received an ACK packet

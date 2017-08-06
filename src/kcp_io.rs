@@ -96,7 +96,7 @@ impl Read for KcpIo {
             available.read(buf)?
         };
         self.consume(nread);
-        trace!("[RECV] KcpIo.read size={} {:?}", nread, ::debug::BsDebug(&buf[..nread]));
+        trace!("[RECV] KcpIo.read size={}", nread);
         Ok(nread)
     }
 }

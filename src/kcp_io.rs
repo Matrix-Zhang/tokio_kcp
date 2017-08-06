@@ -63,7 +63,7 @@ impl BufRead for KcpIo {
                     Ok(n) => n,
                     Err(KcpError::UserBufTooSmall) => {
                         let orig = self.read_buf.len();
-                        let incr = (orig as f64 * 1.5) as usize;
+                        let incr = self.kcp.peeksize().next_power_of_two();
                         trace!("[RECV] kcp.recv buf too small, {} -> {}", orig, incr);
                         self.read_buf.resize(incr, 0);
                         continue;

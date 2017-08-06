@@ -259,4 +259,10 @@ impl SharedKcp {
         let inner = self.inner.borrow();
         inner.kcp.peeksize().unwrap_or(0) != 0
     }
+
+    /// Peek
+    pub fn peeksize(&self) -> usize {
+        let inner = self.inner.borrow();
+        inner.kcp.peeksize().unwrap_or(0)
+    }
 }

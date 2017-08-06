@@ -67,6 +67,12 @@ impl KcpOutputInner {
             }
         }
 
+        trace!("[SEND] Delay UDP {} size={} qsize={} {:?}",
+               peer,
+               buf.len(),
+               self.pkt_queue.len(),
+               ::debug::BsDebug(buf));
+
         self.push_packet(Bytes::from_buf(buf), *peer);
         Ok(buf.len())
     }

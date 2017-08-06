@@ -13,7 +13,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use config::KcpConfig;
 use kcp_io::{ClientKcpIo, ServerKcpIo};
 use session::KcpSessionUpdater;
-use skcp::SharedKcp;
+use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
 
 /// KCP client for interacting with server
 pub struct KcpStream {
@@ -48,7 +48,8 @@ impl KcpStream {
         let udp = UdpSocket::bind(&local, &handle)?;
         let udp = Rc::new(udp);
 
-        let kcp = SharedKcp::new_with_config(config, rand::random::<u32>(), udp.clone(), *addr, handle);
+        // Create a standalone output kcp
+        let kcp = SharedKcp::new(config, rand::random::<u32>(), udp.clone(), *addr, handle);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,
@@ -126,13 +127,14 @@ pub struct ServerKcpStream {
 impl ServerKcpStream {
     #[doc(hidden)]
     pub fn new_with_config(conv: u32,
-                           udp: Rc<UdpSocket>,
+                           output_handle: KcpOutputHandle,
                            addr: &SocketAddr,
                            handle: &Handle,
                            u: &mut KcpSessionUpdater,
                            config: &KcpConfig)
                            -> io::Result<ServerKcpStream> {
-        let kcp = SharedKcp::new_with_config(&config, conv, udp.clone(), *addr, handle);
+        let output = KcpOutput::new_with_handle(output_handle, *addr);
+        let kcp = SharedKcp::new_with_output(&config, conv, output);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,

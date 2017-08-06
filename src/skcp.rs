@@ -17,17 +17,15 @@ use config::KcpConfig;
 
 struct KcpOutputInner {
     udp: Rc<UdpSocket>,
-    peer: SocketAddr,
     task: Option<Task>,
-    pkt_queue: VecDeque<Bytes>,
+    pkt_queue: VecDeque<(SocketAddr, Bytes)>,
     is_finished: bool,
 }
 
 impl KcpOutputInner {
-    fn new(udp: Rc<UdpSocket>, peer: SocketAddr) -> KcpOutputInner {
+    fn new(udp: Rc<UdpSocket>) -> KcpOutputInner {
         KcpOutputInner {
             udp: udp,
-            peer: peer,
             task: None,
             pkt_queue: VecDeque::new(),
             is_finished: false,
@@ -40,8 +38,8 @@ impl KcpOutputInner {
         }
     }
 
-    fn push_packet(&mut self, pkt: Bytes) {
-        self.pkt_queue.push_back(pkt);
+    fn push_packet(&mut self, pkt: Bytes, peer: SocketAddr) {
+        self.pkt_queue.push_back((peer, pkt));
         self.notify();
     }
 
@@ -54,11 +52,11 @@ impl KcpOutputInner {
         self.pkt_queue.is_empty()
     }
 
-    fn send_or_push(&mut self, buf: &[u8]) -> io::Result<usize> {
+    fn send_or_push(&mut self, buf: &[u8], peer: &SocketAddr) -> io::Result<usize> {
         if self.is_empty() {
-            match self.udp.send_to(buf, &self.peer) {
+            match self.udp.send_to(buf, peer) {
                 Ok(n) => {
-                    trace!("[SEND] Immediately UDP {} size={} {:?}", self.peer, buf.len(), ::debug::BsDebug(buf));
+                    trace!("[SEND] Immediately UDP {} size={} {:?}", peer, buf.len(), ::debug::BsDebug(buf));
                     if n != buf.len() {
                         error!("[SEND] Immediately Sent size={}, but packet is size={}", n, buf.len());
                     }
@@ -69,8 +67,14 @@ impl KcpOutputInner {
             }
         }
 
-        self.push_packet(Bytes::from_buf(buf));
+        self.push_packet(Bytes::from_buf(buf), *peer);
         Ok(buf.len())
+    }
+}
+
+impl Drop for KcpOutputInner {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -87,9 +91,9 @@ impl Future for KcpOutputQueue {
 
         while !inner.pkt_queue.is_empty() {
             {
-                let pkt = &inner.pkt_queue[0];
-                let n = try_nb!(inner.udp.send_to(&pkt, &inner.peer));
-                trace!("[SEND] Delayed UDP {} size={} {:?}", inner.peer, pkt.len(), pkt);
+                let &(ref peer, ref pkt) = &inner.pkt_queue[0];
+                let n = try_nb!(inner.udp.send_to(&pkt, &peer));
+                trace!("[SEND] Delayed UDP {} size={} {:?}", peer, pkt.len(), pkt);
                 if n != pkt.len() {
                     error!("[SEND] Delayed Sent size={}, but packet is size={}", n, pkt.len());
                 }
@@ -107,35 +111,49 @@ impl Future for KcpOutputQueue {
     }
 }
 
-pub struct KcpOutput {
+#[derive(Clone)]
+pub struct KcpOutputHandle {
     inner: Rc<RefCell<KcpOutputInner>>,
 }
 
-impl Drop for KcpOutput {
-    fn drop(&mut self) {
-        let mut inner = self.inner.borrow_mut();
-        inner.close();
+impl KcpOutputHandle {
+    pub fn new(udp: Rc<UdpSocket>, handle: &Handle) -> KcpOutputHandle {
+        let inner = KcpOutputInner::new(udp);
+        let inner = Rc::new(RefCell::new(inner));
+        let queue = KcpOutputQueue { inner: inner.clone() };
+        handle.spawn(queue.map_err(move |err| {
+                                       error!("[SEND] UDP output queue failed, err: {:?}", err);
+                                   }));
+        KcpOutputHandle { inner: inner }
     }
+
+    fn send_to(&mut self, buf: &[u8], peer: &SocketAddr) -> io::Result<usize> {
+        let mut inner = self.inner.borrow_mut();
+        inner.send_or_push(buf, peer)
+    }
+}
+
+pub struct KcpOutput {
+    inner: KcpOutputHandle,
+    peer: SocketAddr,
 }
 
 impl KcpOutput {
     pub fn new(udp: Rc<UdpSocket>, peer: SocketAddr, handle: &Handle) -> KcpOutput {
-        let inner = KcpOutputInner::new(udp, peer);
-        let inner = Rc::new(RefCell::new(inner));
+        KcpOutput::new_with_handle(KcpOutputHandle::new(udp, handle), peer)
+    }
 
-        let queue = KcpOutputQueue { inner: inner.clone() };
-        handle.spawn(queue.map_err(move |err| {
-                                       error!("[SEND] UDP output failed, peer: {}, err: {:?}", peer, err);
-                                   }));
-
-        KcpOutput { inner: inner }
+    pub fn new_with_handle(h: KcpOutputHandle, peer: SocketAddr) -> KcpOutput {
+        KcpOutput {
+            inner: h,
+            peer: peer,
+        }
     }
 }
 
 impl Write for KcpOutput {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut inner = self.inner.borrow_mut();
-        inner.send_or_push(buf)
+        self.inner.send_to(buf, &self.peer)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -155,13 +173,12 @@ pub struct SharedKcp {
 }
 
 impl SharedKcp {
-    pub fn new_with_config(c: &KcpConfig,
-                           conv: u32,
-                           udp: Rc<UdpSocket>,
-                           peer: SocketAddr,
-                           handle: &Handle)
-                           -> SharedKcp {
+    pub fn new(c: &KcpConfig, conv: u32, udp: Rc<UdpSocket>, peer: SocketAddr, handle: &Handle) -> SharedKcp {
         let output = KcpOutput::new(udp, peer, handle);
+        SharedKcp::new_with_output(c, conv, output)
+    }
+
+    pub fn new_with_output(c: &KcpConfig, conv: u32, output: KcpOutput) -> SharedKcp {
         let mut kcp = Kcp::new(conv, output);
         c.apply_config(&mut kcp);
 

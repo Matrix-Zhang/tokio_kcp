@@ -9,6 +9,7 @@ use tokio_core::reactor::Handle;
 
 use config::KcpConfig;
 use session::KcpSessionUpdater;
+use skcp::KcpOutputHandle;
 use stream::ServerKcpStream;
 
 /// A KCP Socket server
@@ -18,6 +19,7 @@ pub struct KcpListener {
     handle: Handle,
     config: KcpConfig,
     buf: Vec<u8>,
+    output_handle: KcpOutputHandle,
 }
 
 /// An iterator that infinitely accepts connections on a `KcpListener`
@@ -40,12 +42,16 @@ impl KcpListener {
     /// The returned listener is ready for accepting connections.
     pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
         UdpSocket::bind(addr, handle).map(|udp| {
+            let shared_udp = Rc::new(udp);
+            let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
+
             KcpListener {
-                udp: Rc::new(udp),
+                udp: shared_udp,
                 sessions: KcpSessionUpdater::new(),
                 handle: handle.clone(),
                 config: config,
                 buf: vec![0u8; config.mtu.unwrap_or(1400)],
+                output_handle: output_handle,
             }
         })
     }
@@ -75,7 +81,7 @@ impl KcpListener {
             trace!("[ACPT] Accepted connection {}", addr);
 
             let mut stream = ServerKcpStream::new_with_config(get_conv(&self.buf[..size]),
-                                                              self.udp.clone(),
+                                                              self.output_handle.clone(),
                                                               &addr,
                                                               &self.handle,
                                                               &mut self.sessions,

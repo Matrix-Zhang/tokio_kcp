@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
@@ -12,7 +12,7 @@ repository = "https://github.com/Matrix-Zhang/tokio_kcp"
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
-kcp = "0.3"
+kcp = "0.4"
 log = "0.3"
 mio = "0.6"
 rand = "0.3"

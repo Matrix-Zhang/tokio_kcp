@@ -2,7 +2,6 @@ use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
-use bytes::BytesMut;
 use futures::{Async, Poll, Stream};
 use kcp::get_conv;
 use tokio_core::net::UdpSocket;
@@ -18,6 +17,7 @@ pub struct KcpListener {
     sessions: KcpSessionUpdater,
     handle: Handle,
     config: KcpConfig,
+    buf: Vec<u8>,
 }
 
 /// An iterator that infinitely accepts connections on a `KcpListener`
@@ -40,13 +40,14 @@ impl KcpListener {
     /// The returned listener is ready for accepting connections.
     pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
         UdpSocket::bind(addr, handle).map(|udp| {
-                                              KcpListener {
-                                                  udp: Rc::new(udp),
-                                                  sessions: KcpSessionUpdater::new(),
-                                                  handle: handle.clone(),
-                                                  config: config,
-                                              }
-                                          })
+            KcpListener {
+                udp: Rc::new(udp),
+                sessions: KcpSessionUpdater::new(),
+                handle: handle.clone(),
+                config: config,
+                buf: vec![0u8; config.mtu.unwrap_or(1400)],
+            }
+        })
     }
 
     /// Creates a new `KcpListener` which will be bound to the specific address with default config.
@@ -63,23 +64,17 @@ impl KcpListener {
 
     /// Accept a new incoming connection from this listener.
     pub fn accept(&mut self) -> io::Result<(ServerKcpStream, SocketAddr)> {
-        let mtu = self.config.mtu.unwrap_or(1500);
-        let mut buf = BytesMut::with_capacity(mtu);
-        unsafe {
-            buf.set_len(mtu);
-        }
-
         loop {
-            let (size, addr) = self.udp.recv_from(&mut buf)?;
+            let (size, addr) = self.udp.recv_from(&mut self.buf)?;
 
-            if self.sessions.input_by_addr(&addr, &mut buf[..size])? {
-                trace!("[RECV] size={} addr={} {:?}", size, addr, ::debug::BsDebug(&buf[..size]));
+            if self.sessions.input_by_addr(&addr, &mut self.buf[..size])? {
+                trace!("[RECV] size={} addr={} {:?}", size, addr, ::debug::BsDebug(&self.buf[..size]));
                 continue;
             }
 
             trace!("[ACPT] Accepted connection {}", addr);
 
-            let mut stream = ServerKcpStream::new_with_config(get_conv(&buf),
+            let mut stream = ServerKcpStream::new_with_config(get_conv(&self.buf[..size]),
                                                               self.udp.clone(),
                                                               &addr,
                                                               &self.handle,
@@ -87,7 +82,7 @@ impl KcpListener {
                                                               &self.config)?;
 
             // Input the initial packet
-            stream.input(&buf[..size])?;
+            stream.input(&self.buf[..size])?;
 
             return Ok((stream, addr));
         }

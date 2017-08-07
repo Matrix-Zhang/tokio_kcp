@@ -53,8 +53,8 @@ pub struct KcpConfig {
     pub interval: Option<u32>,
     /// nodelay
     pub nodelay: Option<KcpNoDelayConfig>,
-    /// Send and receive window size
-    pub wnd_size: Option<u32>,
+    /// Send window size
+    pub wnd_size: Option<(u16, u16)>,
     /// Minimal resend timeout
     pub rx_minrto: Option<u32>,
     /// Session expire duration, default is 90 seconds
@@ -79,6 +79,10 @@ impl KcpConfig {
 
         if let Some(rm) = self.rx_minrto {
             k.set_rx_minrto(rm);
+        }
+
+        if let Some(ws) = self.wnd_size {
+            k.set_wndsize(ws.0, ws.1);
         }
     }
 }

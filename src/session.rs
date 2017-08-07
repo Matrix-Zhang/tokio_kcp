@@ -140,6 +140,7 @@ impl KcpSession {
 
         // Update it
         self.update()?;
+        self.kcp.try_notify_writable();
 
         // Check if it is closed
         if self.is_closed() && self.can_close() {

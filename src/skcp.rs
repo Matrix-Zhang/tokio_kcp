@@ -171,6 +171,7 @@ struct KcpCell {
     kcp: Kcp<KcpOutput>,
     last_update: Instant,
     is_closed: bool,
+    send_task: Option<Task>,
 }
 
 #[derive(Clone)]
@@ -193,6 +194,7 @@ impl SharedKcp {
                                             kcp: kcp,
                                             last_update: Instant::now(),
                                             is_closed: false,
+                                            send_task: None,
                                         })),
         }
     }
@@ -208,9 +210,26 @@ impl SharedKcp {
     /// Call if you want to send some data
     pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
+
+        if inner.kcp.waitsnd() >= inner.kcp.snd_wnd() as usize {
+            trace!("[SEND] waitsnd={} snd_wnd={} excceeded", inner.kcp.waitsnd(), inner.kcp.snd_wnd());
+            inner.send_task = Some(task::current());
+            return Err(From::from(io::Error::new(ErrorKind::WouldBlock, "too many pending packets")));
+        }
+
         let n = inner.kcp.send(buf)?;
         inner.last_update = Instant::now();
         Ok(n)
+    }
+
+    /// Try to notify writable
+    pub fn try_notify_writable(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        if inner.kcp.waitsnd() < inner.kcp.snd_wnd() as usize {
+            if let Some(task) = inner.send_task.take() {
+                task.notify();
+            }
+        }
     }
 
     /// Call if you want to get some data
@@ -287,5 +306,11 @@ impl SharedKcp {
     pub fn peeksize(&self) -> usize {
         let inner = self.inner.borrow();
         inner.kcp.peeksize().unwrap_or(0)
+    }
+
+    /// Check if waitsnd > snd_wnd
+    pub fn can_send(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.kcp.waitsnd() < inner.kcp.snd_wnd() as usize
     }
 }

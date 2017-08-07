@@ -103,8 +103,9 @@ impl Read for KcpIo {
 
 impl Write for KcpIo {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        trace!("[SEND] KcpIo.write size={} {:?}", buf.len(), ::debug::BsDebug(buf));
         let n = self.kcp.send(buf)?;
-        trace!("[SEND] Written {} bytes", n);
+        trace!("[SEND] kcp.send size={}", n);
         Ok(n)
     }
 

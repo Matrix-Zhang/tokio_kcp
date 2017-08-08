@@ -10,7 +10,7 @@ use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::Handle;
 
-use session::{KcpClientSession, KcpServerSession, KcpSession, KcpSessionUpdater};
+use session::{KcpClientSession, KcpServerSession, KcpSession, KcpSessionMode, KcpSessionUpdater};
 use skcp::SharedKcp;
 
 /// Base Io object for KCP
@@ -131,7 +131,7 @@ pub struct ClientKcpIo {
 
 impl ClientKcpIo {
     pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration, handle: &Handle) -> io::Result<ClientKcpIo> {
-        let mut sess = KcpSession::new(kcp.clone(), addr, expire_dur, handle)?;
+        let mut sess = KcpSession::new(kcp.clone(), addr, expire_dur, handle, KcpSessionMode::Client)?;
         sess.update()?; // Call update once it is created
         let sess = Rc::new(RefCell::new(sess));
         let sess = KcpClientSession::new(sess);
@@ -182,7 +182,7 @@ impl ServerKcpIo {
                handle: &Handle,
                u: &mut KcpSessionUpdater)
                -> io::Result<ServerKcpIo> {
-        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, handle)?;
+        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, handle, KcpSessionMode::Server)?;
         let (reg, r) = Registration::new2();
         let sess = KcpServerSession::new(sess, r.clone(), u);
         handle.spawn(sess.for_each(|_| Ok(())).map_err(|err| {

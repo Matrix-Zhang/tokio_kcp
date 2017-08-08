@@ -3,7 +3,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::rc::Rc;
 use std::time::Duration;
 
-use bytes::BytesMut;
 use futures::{Async, Poll};
 use rand;
 use tokio_core::net::UdpSocket;
@@ -19,16 +18,13 @@ use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
 pub struct KcpStream {
     udp: Rc<UdpSocket>,
     io: ClientKcpIo,
-    buf: BytesMut,
+    buf: Vec<u8>,
 }
 
 impl KcpStream {
     #[doc(hidden)]
     pub fn new(udp: Rc<UdpSocket>, io: ClientKcpIo) -> KcpStream {
-        let mut buf = BytesMut::with_capacity(io.mtu());
-        unsafe {
-            buf.set_len(io.mtu());
-        }
+        let buf = vec![0u8; io.mtu()];
         KcpStream {
             udp: udp,
             io: io,

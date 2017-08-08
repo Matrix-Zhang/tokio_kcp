@@ -137,6 +137,11 @@ impl KcpOutputHandle {
         let mut inner = self.inner.borrow_mut();
         inner.send_or_push(buf, peer)
     }
+
+    fn udp(&self) -> Rc<UdpSocket> {
+        let inner = self.inner.borrow();
+        inner.udp.clone()
+    }
 }
 
 pub struct KcpOutput {
@@ -155,6 +160,10 @@ impl KcpOutput {
             peer: peer,
         }
     }
+
+    fn udp(&self) -> Rc<UdpSocket> {
+        self.inner.udp()
+    }
 }
 
 impl Write for KcpOutput {
@@ -172,6 +181,42 @@ struct KcpCell {
     last_update: Instant,
     is_closed: bool,
     send_task: Option<Task>,
+    udp: Rc<UdpSocket>,
+    recv_buf: Vec<u8>,
+}
+
+impl KcpCell {
+    fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
+        self.kcp.input(buf)?;
+        self.last_update = Instant::now();
+        Ok(())
+    }
+
+    fn input_self(&mut self, n: usize) -> KcpResult<()> {
+        self.kcp.input(&self.recv_buf[..n])?;
+        self.last_update = Instant::now();
+        Ok(())
+    }
+
+    fn fetch(&mut self) -> KcpResult<()> {
+        // Initialize with MTU
+        if self.recv_buf.len() < self.kcp.mtu() {
+            let mtu = self.kcp.mtu();
+            self.recv_buf.resize(mtu, 0);
+        }
+
+        let n = match self.udp.recv_from(&mut self.recv_buf) {
+            Ok((n, _)) => n,
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                return Ok(());
+            }
+            Err(err) => return Err(From::from(err)),
+        };
+
+        // Ah, we got something
+        trace!("[RECV] Fetch. SharedKcp recv size={} {:?}", n, ::debug::BsDebug(&self.recv_buf[..n]));
+        self.input_self(n)
+    }
 }
 
 #[derive(Clone)]
@@ -186,6 +231,7 @@ impl SharedKcp {
     }
 
     pub fn new_with_output(c: &KcpConfig, conv: u32, output: KcpOutput) -> SharedKcp {
+        let udp = output.udp();
         let mut kcp = Kcp::new(conv, output);
         c.apply_config(&mut kcp);
 
@@ -195,6 +241,8 @@ impl SharedKcp {
                                             last_update: Instant::now(),
                                             is_closed: false,
                                             send_task: None,
+                                            udp: udp,
+                                            recv_buf: Vec::new(), // Do not initialize it yet.
                                         })),
         }
     }
@@ -202,9 +250,13 @@ impl SharedKcp {
     /// Call every time you got data from transmission
     pub fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
-        inner.kcp.input(buf)?;
-        inner.last_update = Instant::now();
-        Ok(())
+        inner.input(buf)
+    }
+
+    /// Recv then input, ignore WouldBlock
+    pub fn fetch(&mut self) -> KcpResult<()> {
+        let mut inner = self.inner.borrow_mut();
+        inner.fetch()
     }
 
     /// Call if you want to send some data

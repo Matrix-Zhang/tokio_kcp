@@ -14,7 +14,7 @@ use skcp::SharedKcp;
 
 #[derive(Clone)]
 pub struct KcpSessionUpdater {
-    sessions: Rc<RefCell<HashMap<SocketAddr, KcpServerSession>>>,
+    sessions: Rc<RefCell<HashMap<u32, KcpServerSession>>>,
 }
 
 impl Debug for KcpSessionUpdater {
@@ -31,12 +31,12 @@ impl KcpSessionUpdater {
 }
 
 impl KcpSessionUpdater {
-    fn sessions_mut(&mut self) -> cell::RefMut<HashMap<SocketAddr, KcpServerSession>> {
+    fn sessions_mut(&mut self) -> cell::RefMut<HashMap<u32, KcpServerSession>> {
         self.sessions.borrow_mut()
     }
 
-    pub fn input_by_addr(&mut self, addr: &SocketAddr, buf: &mut [u8]) -> io::Result<bool> {
-        match self.sessions_mut().get_mut(addr) {
+    pub fn input_by_conv(&mut self, conv: u32, buf: &mut [u8]) -> io::Result<bool> {
+        match self.sessions_mut().get_mut(&conv) {
             None => Ok(false),
             Some(session) => {
                 session.input(buf)?;
@@ -45,14 +45,14 @@ impl KcpSessionUpdater {
         }
     }
 
-    pub fn remove_by_addr(&mut self, addr: &SocketAddr) {
+    pub fn remove_by_conv(&mut self, conv: u32) {
         let mut ses = self.sessions_mut();
-        ses.remove(addr);
+        ses.remove(&conv);
     }
 
-    pub fn insert_by_addr(&mut self, addr: SocketAddr, s: KcpServerSession) {
+    pub fn insert_by_conv(&mut self, conv: u32, s: KcpServerSession) {
         let mut ses = self.sessions_mut();
-        ses.insert(addr, s);
+        ses.insert(conv, s);
     }
 }
 
@@ -204,7 +204,7 @@ impl KcpServerSession {
         // Register it
         {
             let mss = sess.session.borrow();
-            u.insert_by_addr(*mss.addr(), sess.clone());
+            u.insert_by_conv(mss.kcp.conv(), sess.clone());
         }
         sess
     }
@@ -235,7 +235,7 @@ impl Stream for KcpServerSession {
             Ok(Async::Ready(Some(x))) => Ok(Async::Ready(Some(x))),
             Ok(Async::Ready(None)) => {
                 // Session is closed, remove itself from updater
-                self.updater.remove_by_addr(sess.addr());
+                self.updater.remove_by_conv(sess.kcp.conv());
 
                 // Awake pending reads
                 self.readiness.set_readiness(Ready::readable())?;

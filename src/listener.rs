@@ -74,7 +74,8 @@ impl KcpListener {
             let (size, addr) = self.udp.recv_from(&mut self.buf)?;
             trace!("[RECV] size={} addr={} {:?}", size, addr, ::debug::BsDebug(&self.buf[..size]));
 
-            if self.sessions.input_by_addr(&addr, &mut self.buf[..size])? {
+            let conv = get_conv(&self.buf[..size]);
+            if self.sessions.input_by_conv(conv, &mut self.buf[..size])? {
                 continue;
             }
 

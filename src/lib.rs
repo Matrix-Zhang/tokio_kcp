@@ -8,7 +8,6 @@ extern crate mio;
 #[macro_use]
 extern crate tokio_core;
 extern crate tokio_io;
-extern crate rand;
 extern crate time;
 #[macro_use]
 extern crate log;

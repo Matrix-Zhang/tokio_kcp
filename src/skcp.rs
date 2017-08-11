@@ -183,6 +183,7 @@ struct KcpCell {
     send_task: Option<Task>,
     udp: Rc<UdpSocket>,
     recv_buf: Vec<u8>,
+    conv: u32,
 }
 
 impl KcpCell {
@@ -243,6 +244,7 @@ impl SharedKcp {
                                             send_task: None,
                                             udp: udp,
                                             recv_buf: Vec::new(), // Do not initialize it yet.
+                                            conv: conv,
                                         })),
         }
     }
@@ -364,5 +366,11 @@ impl SharedKcp {
     pub fn can_send(&self) -> bool {
         let inner = self.inner.borrow();
         inner.kcp.waitsnd() < inner.kcp.snd_wnd() as usize
+    }
+
+    /// Get conv
+    pub fn conv(&self) -> u32 {
+        let inner = self.inner.borrow();
+        inner.conv
     }
 }

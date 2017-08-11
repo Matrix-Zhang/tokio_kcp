@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures::{Async, Poll};
-use rand;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::{Handle, PollEvented};
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -33,19 +32,23 @@ impl KcpStream {
     }
 
     /// Opens a KCP connection to a remote host.
-    pub fn connect(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpStream> {
-        KcpStream::connect_with_config(addr, handle, &KcpConfig::default())
+    pub fn connect(conv: u32, addr: &SocketAddr, handle: &Handle) -> io::Result<KcpStream> {
+        KcpStream::connect_with_config(conv, addr, handle, &KcpConfig::default())
     }
 
     /// Opens a KCP connection to a remote host.
-    pub fn connect_with_config(addr: &SocketAddr, handle: &Handle, config: &KcpConfig) -> io::Result<KcpStream> {
+    pub fn connect_with_config(conv: u32,
+                               addr: &SocketAddr,
+                               handle: &Handle,
+                               config: &KcpConfig)
+                               -> io::Result<KcpStream> {
         let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
         let udp = UdpSocket::bind(&local, &handle)?;
         let udp = Rc::new(udp);
 
         // Create a standalone output kcp
-        let kcp = SharedKcp::new(config, rand::random::<u32>(), udp.clone(), *addr, handle);
+        let kcp = SharedKcp::new(config, conv, udp.clone(), *addr, handle);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,

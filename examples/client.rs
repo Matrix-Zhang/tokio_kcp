@@ -34,7 +34,7 @@ fn main() {
     let stdin_rx = stdin_rx.map_err(|_| panic!());
     let mut stdout = io::stdout();
 
-    let client = futures::lazy(|| KcpStream::connect(&addr, &handle)).and_then(|stream| {
+    let client = futures::lazy(|| KcpStream::connect(0, &addr, &handle)).and_then(|stream| {
         let (sink, stream) = stream.framed(Bytes).split();
         let send_stdin = stdin_rx.forward(sink);
         let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));

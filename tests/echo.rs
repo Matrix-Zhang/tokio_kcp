@@ -116,12 +116,12 @@ fn echo() {
                                  panic!("Failed to run server: {:?}", err);
                              }));
 
-    let cli = futures::lazy(|| KcpStream::connect(&addr, &handle)).and_then(|s| {
-                                                                                let (r, w) = s.split();
-                                                                                let w_fut = LoopSender::new(w, 100);
-                                                                                let r_fut = LoopReader::new(r, 100);
-                                                                                r_fut.join(w_fut)
-                                                                            });
+    let cli = futures::lazy(|| KcpStream::connect(0, &addr, &handle)).and_then(|s| {
+                                                                                   let (r, w) = s.split();
+                                                                                   let w_fut = LoopSender::new(w, 100);
+                                                                                   let r_fut = LoopReader::new(r, 100);
+                                                                                   r_fut.join(w_fut)
+                                                                               });
 
     core.run(cli).unwrap();
 }

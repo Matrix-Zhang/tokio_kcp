@@ -184,6 +184,13 @@ struct KcpCell {
     udp: Rc<UdpSocket>,
     recv_buf: Vec<u8>,
     conv: u32,
+    expired: bool,
+}
+
+impl Drop for KcpCell {
+    fn drop(&mut self) {
+        let _ = self.kcp.flush();
+    }
 }
 
 impl KcpCell {
@@ -245,6 +252,7 @@ impl SharedKcp {
                                             udp: udp,
                                             recv_buf: Vec::new(), // Do not initialize it yet.
                                             conv: conv,
+                                            expired: false,
                                         })),
         }
     }
@@ -290,6 +298,11 @@ impl SharedKcp {
     /// Always call right after input
     pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
+        if inner.expired {
+            // If it is already expired, return EOF
+            return Ok(0);
+        }
+
         let n = inner.kcp.recv(buf)?;
         inner.last_update = Instant::now();
         Ok(n)
@@ -313,7 +326,7 @@ impl SharedKcp {
     /// It will flush the buffer when it is called
     pub fn set_expired(&mut self) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
-        inner.kcp.expired();
+        inner.expired = true;
         inner.kcp.flush()
     }
 

@@ -59,6 +59,8 @@ pub struct KcpConfig {
     pub rx_minrto: Option<u32>,
     /// Session expire duration, default is 90 seconds
     pub session_expire: Option<Duration>,
+    /// Fast resend
+    pub fast_resend: Option<u32>,
 }
 
 impl KcpConfig {
@@ -83,6 +85,10 @@ impl KcpConfig {
 
         if let Some(ws) = self.wnd_size {
             k.set_wndsize(ws.0, ws.1);
+        }
+
+        if let Some(fr) = self.fast_resend {
+            k.set_fast_resend(fr);
         }
     }
 }

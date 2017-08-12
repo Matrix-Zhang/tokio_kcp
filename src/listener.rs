@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 
 use futures::{Async, Poll, Stream};
-use kcp::get_conv;
+use kcp::{get_conv, set_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
@@ -74,14 +74,25 @@ impl KcpListener {
             let (size, addr) = self.udp.recv_from(&mut self.buf)?;
             trace!("[RECV] size={} addr={} {:?}", size, addr, ::debug::BsDebug(&self.buf[..size]));
 
-            let conv = get_conv(&self.buf[..size]);
-            if self.sessions.input_by_conv(conv, &mut self.buf[..size])? {
+            let mut buf = &mut self.buf[..size];
+
+            let mut conv = get_conv(&*buf);
+            if self.sessions.input_by_conv(conv, buf)? {
                 continue;
             }
 
             trace!("[ACPT] Accepted connection {}", addr);
 
-            let mut stream = ServerKcpStream::new_with_config(get_conv(&self.buf[..size]),
+            // Set `conv` to 0 means let the server allocate a `conv` for it
+            if conv == 0 {
+                conv = self.sessions.get_free_conv();
+                trace!("[ACPT] Allocated conv={} for {}", conv, addr);
+
+                // Set to buffer
+                set_conv(buf, conv);
+            }
+
+            let mut stream = ServerKcpStream::new_with_config(conv,
                                                               self.output_handle.clone(),
                                                               &addr,
                                                               &self.handle,
@@ -89,7 +100,7 @@ impl KcpListener {
                                                               &self.config)?;
 
             // Input the initial packet
-            stream.input(&self.buf[..size])?;
+            stream.input(&*buf)?;
 
             return Ok((stream, addr));
         }

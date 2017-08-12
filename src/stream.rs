@@ -32,11 +32,15 @@ impl KcpStream {
     }
 
     /// Opens a KCP connection to a remote host.
+    ///
+    /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
     pub fn connect(conv: u32, addr: &SocketAddr, handle: &Handle) -> io::Result<KcpStream> {
         KcpStream::connect_with_config(conv, addr, handle, &KcpConfig::default())
     }
 
     /// Opens a KCP connection to a remote host.
+    ///
+    /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
     pub fn connect_with_config(conv: u32,
                                addr: &SocketAddr,
                                handle: &Handle,

@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use futures::{Async, Future, Poll, Stream};
 use mio::{Ready, SetReadiness};
+use rand;
 use tokio_core::reactor::{Handle, Timeout};
 
 use skcp::SharedKcp;
@@ -53,6 +54,25 @@ impl KcpSessionUpdater {
     pub fn insert_by_conv(&mut self, conv: u32, s: KcpServerSession) {
         let mut ses = self.sessions_mut();
         ses.insert(conv, s);
+    }
+
+    /// Get one unused `conv`
+    pub fn get_free_conv(&self) -> u32 {
+        let ses = self.sessions.borrow();
+
+        let mut conv = rand::random::<u32>();
+        if conv == 0 {
+            conv = 1;
+        }
+
+        while ses.contains_key(&conv) {
+            conv = rand::random::<u32>();
+            if conv == 0 {
+                conv = 1;
+            }
+        }
+
+        conv
     }
 }
 

@@ -183,7 +183,6 @@ struct KcpCell {
     send_task: Option<Task>,
     udp: Rc<UdpSocket>,
     recv_buf: Vec<u8>,
-    conv: u32,
     expired: bool,
 }
 
@@ -243,6 +242,11 @@ impl SharedKcp {
         let mut kcp = Kcp::new(conv, output);
         c.apply_config(&mut kcp);
 
+        // Ask server to allocate one
+        if conv == 0 {
+            kcp.input_conv();
+        }
+
         SharedKcp {
             inner: Rc::new(RefCell::new(KcpCell {
                                             kcp: kcp,
@@ -251,7 +255,6 @@ impl SharedKcp {
                                             send_task: None,
                                             udp: udp,
                                             recv_buf: Vec::new(), // Do not initialize it yet.
-                                            conv: conv,
                                             expired: false,
                                         })),
         }
@@ -384,6 +387,6 @@ impl SharedKcp {
     /// Get conv
     pub fn conv(&self) -> u32 {
         let inner = self.inner.borrow();
-        inner.conv
+        inner.kcp.conv()
     }
 }

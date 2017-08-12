@@ -276,8 +276,8 @@ impl SharedKcp {
     pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
 
-        if inner.kcp.waitsnd() >= inner.kcp.snd_wnd() as usize {
-            trace!("[SEND] waitsnd={} snd_wnd={} excceeded", inner.kcp.waitsnd(), inner.kcp.snd_wnd());
+        if inner.kcp.wait_snd() >= inner.kcp.snd_wnd() as usize {
+            trace!("[SEND] waitsnd={} sndwnd={} excceeded", inner.kcp.wait_snd(), inner.kcp.snd_wnd());
             inner.send_task = Some(task::current());
             return Err(From::from(io::Error::new(ErrorKind::WouldBlock, "too many pending packets")));
         }
@@ -290,7 +290,7 @@ impl SharedKcp {
     /// Try to notify writable
     pub fn try_notify_writable(&mut self) {
         let mut inner = self.inner.borrow_mut();
-        if inner.kcp.waitsnd() < inner.kcp.snd_wnd() as usize {
+        if inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize {
             if let Some(task) = inner.send_task.take() {
                 task.notify();
             }
@@ -345,7 +345,7 @@ impl SharedKcp {
     /// Check if send queue is empty
     pub fn has_waitsnd(&self) -> bool {
         let inner = self.inner.borrow();
-        inner.kcp.waitsnd() != 0
+        inner.kcp.wait_snd() != 0
     }
 
     /// Get mtu
@@ -381,7 +381,7 @@ impl SharedKcp {
     /// Check if waitsnd > snd_wnd
     pub fn can_send(&self) -> bool {
         let inner = self.inner.borrow();
-        inner.kcp.waitsnd() < inner.kcp.snd_wnd() as usize
+        inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize
     }
 
     /// Get conv

@@ -11,7 +11,6 @@ extern crate log;
 extern crate time;
 extern crate rand;
 
-use std::collections::HashSet;
 use std::env;
 use std::io::{self, Cursor, Read, Write};
 use std::net::SocketAddr;
@@ -219,19 +218,11 @@ fn main() {
 
     let mut fut: Option<Box<Future<Item = (), Error = io::Error>>> = None;
 
-    let mut conv_set = HashSet::new();
-
     for i in 0..count {
         let handle = core.handle();
         let chandle = handle.clone();
 
-        let mut conv = rand::random::<u32>();
-        while conv_set.contains(&conv) {
-            conv = rand::random::<u32>();
-        }
-        conv_set.insert(conv);
-
-        let cli = futures::lazy(move || KcpStream::connect_with_config(conv, &addr, &handle, &config))
+        let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &config))
             .and_then(move |s| {
                 let (r, w) = s.split();
                 let w_fut = LoopSender::new(w, 1000, &chandle);

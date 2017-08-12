@@ -9,7 +9,9 @@ extern crate env_logger;
 #[macro_use]
 extern crate log;
 extern crate time;
+extern crate rand;
 
+use std::collections::HashSet;
 use std::env;
 use std::io::{self, Cursor, Read, Write};
 use std::net::SocketAddr;
@@ -94,10 +96,11 @@ struct LoopReader<R: Read> {
     buf: Vec<u8>,
     mode: TestMode,
     start_ts: u32,
+    i: usize,
 }
 
 impl<R: Read> LoopReader<R> {
-    fn new(mode: TestMode, r: R, count: usize) -> LoopReader<R> {
+    fn new(i: usize, mode: TestMode, r: R, count: usize) -> LoopReader<R> {
         LoopReader {
             r: Some(r),
             count: count,
@@ -107,14 +110,15 @@ impl<R: Read> LoopReader<R> {
             buf: vec![0u8; 8],
             mode: mode,
             start_ts: current(),
+            i: i,
         }
     }
 }
 
 impl<R: Read> Drop for LoopReader<R> {
     fn drop(&mut self) {
-        println!("{:?} mode result ({}ms)", self.mode, current() - self.start_ts);
-        println!("avgrtt={} maxrtt={}", self.sum_rtt / self.count, self.max_rtt);
+        println!("{} {:?} mode result ({}ms)", self.i, self.mode, current() - self.start_ts);
+        println!("{} avgrtt={} maxrtt={}", self.i, self.sum_rtt / self.count, self.max_rtt);
     }
 }
 
@@ -139,7 +143,7 @@ impl<R: Read> Future for LoopReader<R> {
             self.next += 1;
 
             let rtt = ccur - ts;
-            debug!("[RECV] mode={:?} sn={} rtt={}", self.mode, sn, rtt);
+            debug!("[RECV] {} mode={:?} sn={} rtt={}", self.i, self.mode, sn, rtt);
 
             self.sum_rtt += rtt as usize;
             if rtt as usize > self.max_rtt {
@@ -203,23 +207,50 @@ fn main() {
         _ => panic!("Unrecognized mode {}", mode),
     };
 
+    let count = env::args()
+        .nth(3)
+        .unwrap_or("1".to_owned())
+        .parse::<usize>()
+        .unwrap();
+
     let config = get_config(mode);
 
     let mut core = Core::new().unwrap();
-    let handle = core.handle();
 
-    let chandle = core.handle();
-    let cli = futures::lazy(|| KcpStream::connect_with_config(0, &addr, &handle, &config)).and_then(move |s| {
-        let (r, w) = s.split();
-        let w_fut = LoopSender::new(w, 1000, &chandle);
-        let r_fut = LoopReader::new(TestMode::Default, r, 1000);
-        // r_fut.join(w_fut)
-        r_fut.select2(w_fut).then(|r| match r {
-                                      Ok(..) => Ok(()),
-                                      Err(Either::A((err, ..))) => Err(err),
-                                      Err(Either::B((err, ..))) => Err(err),
-                                  })
-    });
+    let mut fut: Option<Box<Future<Item = (), Error = io::Error>>> = None;
 
-    core.run(cli).unwrap();
+    let mut conv_set = HashSet::new();
+
+    for i in 0..count {
+        let handle = core.handle();
+        let chandle = handle.clone();
+
+        let mut conv = rand::random::<u32>();
+        while conv_set.contains(&conv) {
+            conv = rand::random::<u32>();
+        }
+        conv_set.insert(conv);
+
+        let cli = futures::lazy(move || KcpStream::connect_with_config(conv, &addr, &handle, &config))
+            .and_then(move |s| {
+                let (r, w) = s.split();
+                let w_fut = LoopSender::new(w, 1000, &chandle);
+                let r_fut = LoopReader::new(i, TestMode::Default, r, 1000);
+                // r_fut.join(w_fut)
+                r_fut.select2(w_fut).then(|r| match r {
+                                              Ok(..) => Ok(()),
+                                              Err(Either::A((err, ..))) => Err(err),
+                                              Err(Either::B((err, ..))) => Err(err),
+                                          })
+            });
+
+        match fut.take() {
+            Some(f) => {
+                fut = Some(Box::new(f.join(cli).map(|_| ())) as Box<Future<Item = (), Error = io::Error>>);
+            }
+            None => fut = Some(Box::new(cli) as Box<Future<Item = (), Error = io::Error>>),
+        }
+    }
+
+    core.run(fut.unwrap()).unwrap();
 }

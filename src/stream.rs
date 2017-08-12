@@ -59,7 +59,8 @@ impl KcpStream {
             None => Duration::from_secs(90),
         };
 
-        let io = ClientKcpIo::new(kcp, *addr, sess_exp, &handle)?;
+        let local_addr = udp.local_addr().expect("Failed to get local addr");
+        let io = ClientKcpIo::new(kcp, local_addr, sess_exp, &handle)?;
         Ok(KcpStream::new(udp, io))
     }
 

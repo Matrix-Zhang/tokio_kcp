@@ -250,7 +250,14 @@ impl Stream for KcpServerSession {
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut sess = self.session.borrow_mut();
         match sess.poll() {
-            Err(err) => Err(err),
+            Err(err) => {
+                // Session is closed, remove itself from updater
+                self.updater.remove_by_conv(sess.kcp.conv());
+
+                // Awake pending reads
+                self.readiness.set_readiness(Ready::readable())?;
+                Err(err)
+            }
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Ok(Async::Ready(Some(x))) => Ok(Async::Ready(Some(x))),
             Ok(Async::Ready(None)) => {

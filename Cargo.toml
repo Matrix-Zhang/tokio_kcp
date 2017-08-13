@@ -21,3 +21,4 @@ tokio-io = "0.1"
 
 [dev-dependencies]
 env_logger = "0.4.3"
+rand = "0.3"

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures::{Future, Stream};
-use kcp::Error as KcpError;
+use kcp::{Error as KcpError, get_conv};
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::Handle;
 
@@ -80,7 +80,9 @@ impl BufRead for KcpIo {
 
                 self.read_pos = 0;
                 self.read_cap = n;
-                trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
+
+                let buf = &self.read_buf[..n];
+                trace!("[RECV] kcp.recv size={} conv={} {:?}", n, get_conv(buf), ::debug::BsDebug(&buf));
 
                 break;
             }
@@ -143,6 +145,7 @@ impl ClientKcpIo {
         handle.spawn(sess.for_each(|_| Ok(())).map_err(|err| {
                                                            error!("Failed to update KCP session: err: {:?}", err);
                                                        }));
+        trace!("[CLIENT] Created stream bind addr={}", addr);
         Ok(ClientKcpIo { io: KcpIo::new(kcp) })
     }
 

@@ -9,6 +9,7 @@ use tokio_core::reactor::{Handle, PollEvented};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use config::KcpConfig;
+use kcp::get_conv;
 use kcp_io::{ClientKcpIo, ServerKcpIo};
 use session::KcpSessionUpdater;
 use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
@@ -67,11 +68,13 @@ impl KcpStream {
     fn recv_from(&mut self) -> io::Result<()> {
         match self.udp.recv_from(&mut self.buf) {
             Ok((n, addr)) => {
-                trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
-                match self.io.input(&self.buf[..n]) {
+                let buf = &self.buf[..n];
+
+                trace!("[RECV] UDP addr={} conv={} size={} {:?}", addr, get_conv(buf), n, ::debug::BsDebug(buf));
+                match self.io.input(buf) {
                     Ok(..) => Ok(()),
                     Err(err) => {
-                        error!("[RECV] Input for {} error, recv addr={}, error: {}",
+                        error!("[RECV] Input for local addr={} error, recv addr={}, error: {:?}",
                                self.udp.local_addr().unwrap(),
                                addr,
                                err);

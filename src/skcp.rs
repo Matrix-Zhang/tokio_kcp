@@ -189,6 +189,7 @@ struct KcpCell {
     udp: Rc<UdpSocket>,
     recv_buf: Vec<u8>,
     expired: bool,
+    sent_first: bool,
 }
 
 impl Drop for KcpCell {
@@ -281,6 +282,7 @@ impl SharedKcp {
                                             udp: udp,
                                             recv_buf: Vec::new(), // Do not initialize it yet.
                                             expired: false,
+                                            sent_first: false,
                                         })),
         }
     }
@@ -301,13 +303,20 @@ impl SharedKcp {
     pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
 
-        if inner.kcp.wait_snd() >= inner.kcp.snd_wnd() as usize {
-            trace!("[SEND] waitsnd={} sndwnd={} excceeded", inner.kcp.wait_snd(), inner.kcp.snd_wnd());
+        // If:
+        //     1. Have sent the first packet (asking for conv)
+        //     2. Too many pending packets
+        if inner.sent_first && (inner.kcp.wait_snd() >= inner.kcp.snd_wnd() as usize || inner.kcp.waiting_conv()) {
+            trace!("[SEND] waitsnd={} sndwnd={} excceeded or waiting conv={}",
+                   inner.kcp.wait_snd(),
+                   inner.kcp.snd_wnd(),
+                   inner.kcp.waiting_conv());
             inner.send_task = Some(task::current());
             return Err(From::from(io::Error::new(ErrorKind::WouldBlock, "too many pending packets")));
         }
 
         let n = inner.kcp.send(buf)?;
+        inner.sent_first = true;
         inner.last_update = Instant::now();
         Ok(n)
     }
@@ -406,7 +415,7 @@ impl SharedKcp {
     /// Check if waitsnd > snd_wnd
     pub fn can_send(&self) -> bool {
         let inner = self.inner.borrow();
-        inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize
+        inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize && !inner.kcp.waiting_conv()
     }
 
     /// Get conv

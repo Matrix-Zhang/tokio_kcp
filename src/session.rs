@@ -217,7 +217,7 @@ impl KcpSession {
     /// Called if it is expired
     pub fn expire(&mut self) -> io::Result<()> {
         self.kcp.set_expired()?;
-        trace!("[SESS] addr={} is expired", self.addr);
+        trace!("[SESS] addr={} conv={} is expired", self.addr, self.kcp.conv());
         Ok(())
     }
 

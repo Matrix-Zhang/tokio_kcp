@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use futures::{Async, Future, Poll, Stream};
 use mio::{Ready, SetReadiness};
-use rand;
 use tokio_core::reactor::{Handle, Timeout};
 
 use skcp::SharedKcp;
@@ -16,6 +15,7 @@ use skcp::SharedKcp;
 #[derive(Clone)]
 pub struct KcpSessionUpdater {
     sessions: Rc<RefCell<HashMap<u32, KcpServerSession>>>,
+    alloc_conv: u32,
 }
 
 impl Debug for KcpSessionUpdater {
@@ -27,7 +27,10 @@ impl Debug for KcpSessionUpdater {
 
 impl KcpSessionUpdater {
     pub fn new() -> KcpSessionUpdater {
-        KcpSessionUpdater { sessions: Rc::new(RefCell::new(HashMap::new())) }
+        KcpSessionUpdater {
+            sessions: Rc::new(RefCell::new(HashMap::new())),
+            alloc_conv: 1,
+        }
     }
 }
 
@@ -57,19 +60,18 @@ impl KcpSessionUpdater {
     }
 
     /// Get one unused `conv`
-    pub fn get_free_conv(&self) -> u32 {
+    pub fn get_free_conv(&mut self) -> u32 {
         let ses = self.sessions.borrow();
 
-        let mut conv = rand::random::<u32>();
-        if conv == 0 {
-            conv = 1;
-        }
-
+        let mut conv = self.alloc_conv;
         while ses.contains_key(&conv) {
-            conv = rand::random::<u32>();
-            if conv == 0 {
-                conv = 1;
+            let (c, _) = self.alloc_conv.overflowing_add(1);
+            self.alloc_conv = c;
+            if self.alloc_conv == 0 {
+                self.alloc_conv = 1;
             }
+
+            conv = self.alloc_conv;
         }
 
         conv
@@ -161,7 +163,7 @@ impl KcpSession {
     /// Check if it is ready to close
     pub fn can_close(&self) -> bool {
         !self.kcp.has_waitsnd() // Does not have anything to be sent
-            && self.kcp.elapsed() > Duration::from_secs(30) // Wait for 30s
+            && self.kcp.elapsed() > Duration::from_secs(10) // Wait for 10s
     }
 
     /// Pull like a stream
@@ -188,7 +190,7 @@ impl KcpSession {
             }
 
             if self.can_close() {
-                trace!("[SESS] addr={} closed", self.addr);
+                trace!("[SESS] addr={} conv={} closing", self.addr, self.kcp.conv());
                 return Ok(Async::Ready(None));
             }
         }
@@ -253,6 +255,7 @@ impl Stream for KcpServerSession {
             Err(err) => {
                 // Session is closed, remove itself from updater
                 self.updater.remove_by_conv(sess.kcp.conv());
+                trace!("[SESS] Close and remove addr={} conv={}, err: {}", sess.addr, sess.kcp.conv(), err);
 
                 // Awake pending reads
                 self.readiness.set_readiness(Ready::readable())?;
@@ -263,6 +266,7 @@ impl Stream for KcpServerSession {
             Ok(Async::Ready(None)) => {
                 // Session is closed, remove itself from updater
                 self.updater.remove_by_conv(sess.kcp.conv());
+                trace!("[SESS] Close and remove addr={} conv={}", sess.addr, sess.kcp.conv());
 
                 // Awake pending reads
                 self.readiness.set_readiness(Ready::readable())?;

@@ -68,8 +68,16 @@ impl KcpStream {
         match self.udp.recv_from(&mut self.buf) {
             Ok((n, addr)) => {
                 trace!("[RECV] UDP {} size={} {:?}", addr, n, ::debug::BsDebug(&self.buf[..n]));
-                self.io.input(&self.buf[..n])?;
-                Ok(())
+                match self.io.input(&self.buf[..n]) {
+                    Ok(..) => Ok(()),
+                    Err(err) => {
+                        error!("[RECV] Input for {} error, recv addr={}, error: {}",
+                               self.udp.local_addr().unwrap(),
+                               addr,
+                               err);
+                        Err(err)
+                    }
+                }
             }
             Err(err) => Err(err),
         }

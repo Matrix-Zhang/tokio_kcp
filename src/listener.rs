@@ -72,11 +72,11 @@ impl KcpListener {
     pub fn accept(&mut self) -> io::Result<(ServerKcpStream, SocketAddr)> {
         loop {
             let (size, addr) = self.udp.recv_from(&mut self.buf)?;
-            trace!("[RECV] size={} addr={} {:?}", size, addr, ::debug::BsDebug(&self.buf[..size]));
 
             let mut buf = &mut self.buf[..size];
-
             let mut conv = get_conv(&*buf);
+            trace!("[RECV] size={} conv={} addr={} {:?}", size, conv, addr, ::debug::BsDebug(buf));
+
             if self.sessions.input_by_conv(conv, buf)? {
                 continue;
             }

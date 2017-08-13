@@ -53,6 +53,11 @@ impl KcpIo {
         self.kcp.close();
         Ok(())
     }
+
+    /// Check if can read
+    pub fn can_read(&self) -> bool {
+        self.kcp.can_read()
+    }
 }
 
 impl BufRead for KcpIo {
@@ -199,7 +204,9 @@ impl ServerKcpIo {
     /// Call everytime you got data from transmission
     pub fn input(&mut self, data: &[u8]) -> io::Result<()> {
         self.io.input(data)?;
-        self.readiness.set_readiness(Ready::readable())?;
+        if self.io.can_read() {
+            self.readiness.set_readiness(Ready::readable())?;
+        }
         Ok(())
     }
 

@@ -9,7 +9,7 @@ use bytes::Bytes;
 use bytes::buf::FromBuf;
 use futures::{Async, Future, Poll};
 use futures::task::{self, Task};
-use kcp::{Kcp, KcpResult};
+use kcp::{Error as KcpError, Kcp, KcpResult, get_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
@@ -56,9 +56,13 @@ impl KcpOutputInner {
         if self.is_empty() {
             match self.udp.send_to(buf, peer) {
                 Ok(n) => {
-                    trace!("[SEND] Immediately UDP {} size={} {:?}", peer, buf.len(), ::debug::BsDebug(buf));
+                    trace!("[SEND] UDP peer={} conv={} size={} {:?}",
+                           peer,
+                           get_conv(buf),
+                           buf.len(),
+                           ::debug::BsDebug(buf));
                     if n != buf.len() {
-                        error!("[SEND] Immediately Sent size={}, but packet is size={}", n, buf.len());
+                        error!("[SEND] UDP Sent size={}, but packet is size={}", n, buf.len());
                     }
                     return Ok(n);
                 }
@@ -67,8 +71,9 @@ impl KcpOutputInner {
             }
         }
 
-        trace!("[SEND] Delay UDP {} size={} qsize={} {:?}",
+        trace!("[SEND] Delay UDP peer={} conv={} size={} qsize={} {:?}",
                peer,
+               get_conv(buf),
                buf.len(),
                self.pkt_queue.len(),
                ::debug::BsDebug(buf));
@@ -98,8 +103,8 @@ impl Future for KcpOutputQueue {
         while !inner.pkt_queue.is_empty() {
             {
                 let &(ref peer, ref pkt) = &inner.pkt_queue[0];
-                let n = try_nb!(inner.udp.send_to(&pkt, &peer));
-                trace!("[SEND] Delayed UDP {} size={} {:?}", peer, pkt.len(), pkt);
+                let n = try_nb!(inner.udp.send_to(&*pkt, peer));
+                trace!("[SEND] Delayed UDP peer={} conv={} size={} {:?}", peer, get_conv(&pkt), pkt.len(), pkt);
                 if n != pkt.len() {
                     error!("[SEND] Delayed Sent size={}, but packet is size={}", n, pkt.len());
                 }
@@ -194,13 +199,21 @@ impl Drop for KcpCell {
 
 impl KcpCell {
     fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
-        self.kcp.input(buf)?;
+        match self.kcp.input(buf) {
+            Ok(..) => {}
+            Err(KcpError::ConvInconsistent(..)) => {}
+            Err(err) => return Err(err),
+        }
         self.last_update = Instant::now();
         Ok(())
     }
 
     fn input_self(&mut self, n: usize) -> KcpResult<()> {
-        self.kcp.input(&self.recv_buf[..n])?;
+        match self.kcp.input(&self.recv_buf[..n]) {
+            Ok(..) => {}
+            Err(KcpError::ConvInconsistent(..)) => {}
+            Err(err) => return Err(err),
+        }
         self.last_update = Instant::now();
         Ok(())
     }

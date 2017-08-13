@@ -11,7 +11,6 @@ extern crate tokio_io;
 extern crate time;
 #[macro_use]
 extern crate log;
-extern crate rand;
 
 use time::Timespec;
 

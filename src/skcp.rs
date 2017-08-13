@@ -324,7 +324,7 @@ impl SharedKcp {
     /// Try to notify writable
     pub fn try_notify_writable(&mut self) {
         let mut inner = self.inner.borrow_mut();
-        if inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize {
+        if inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize && !inner.kcp.waiting_conv() {
             if let Some(task) = inner.send_task.take() {
                 task.notify();
             }
@@ -410,12 +410,6 @@ impl SharedKcp {
     pub fn peeksize(&self) -> usize {
         let inner = self.inner.borrow();
         inner.kcp.peeksize().unwrap_or(0)
-    }
-
-    /// Check if waitsnd > snd_wnd
-    pub fn can_send(&self) -> bool {
-        let inner = self.inner.borrow();
-        inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize && !inner.kcp.waiting_conv()
     }
 
     /// Get conv

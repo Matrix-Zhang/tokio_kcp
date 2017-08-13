@@ -189,10 +189,8 @@ impl ServerKcpIo {
                -> io::Result<ServerKcpIo> {
         let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, handle, KcpSessionMode::Server)?;
         let (reg, r) = Registration::new2();
-        let sess = KcpServerSession::new(sess, r.clone(), u);
-        handle.spawn(sess.for_each(|_| Ok(())).map_err(|err| {
-                                                           error!("Failed to update KCP session: err: {:?}", err);
-                                                       }));
+        let sess = KcpServerSession::new(sess, r.clone());
+        u.insert_by_conv(kcp.conv(), sess);
 
         Ok(ServerKcpIo {
                io: KcpIo::new(kcp),

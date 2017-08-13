@@ -1,10 +1,10 @@
-use std::cell::{self, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{self, Debug};
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::{Async, Future, Poll, Stream};
 use mio::{Ready, SetReadiness};
@@ -12,35 +12,55 @@ use tokio_core::reactor::{Handle, Timeout};
 
 use skcp::SharedKcp;
 
+pub struct KcpSessionUpdaterInner {
+    sessions: HashMap<u32, KcpServerSession>,
+    alloc_conv: u32,
+    update_interval: Duration,
+    is_stop: bool,
+    timeout: Timeout,
+}
+
+impl Debug for KcpSessionUpdaterInner {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,
+               "sessions: {:?}, alloc_conv: {}, update_interval: {:?}",
+               self.sessions,
+               self.alloc_conv,
+               self.update_interval)
+    }
+}
+
 #[derive(Clone)]
 pub struct KcpSessionUpdater {
-    sessions: Rc<RefCell<HashMap<u32, KcpServerSession>>>,
-    alloc_conv: u32,
+    inner: Rc<RefCell<KcpSessionUpdaterInner>>,
 }
 
 impl Debug for KcpSessionUpdater {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let hmap = self.sessions.borrow();
-        write!(f, "KcpSessionUpdater {{ sessions: {:?} }}", &*hmap)
+        let inner = self.inner.borrow();
+        write!(f, "KcpSessionUpdater {{ {:?} }}", &*inner)
     }
 }
 
 impl KcpSessionUpdater {
-    pub fn new() -> KcpSessionUpdater {
-        KcpSessionUpdater {
-            sessions: Rc::new(RefCell::new(HashMap::new())),
-            alloc_conv: 1,
-        }
-    }
-}
+    pub fn new(update_intv: Duration, handle: &Handle) -> io::Result<KcpSessionUpdater> {
+        let timeout = Timeout::new(Duration::from_secs(0), handle)?;
 
-impl KcpSessionUpdater {
-    fn sessions_mut(&mut self) -> cell::RefMut<HashMap<u32, KcpServerSession>> {
-        self.sessions.borrow_mut()
+        Ok(KcpSessionUpdater {
+               inner: Rc::new(RefCell::new(KcpSessionUpdaterInner {
+                                               sessions: HashMap::new(),
+                                               alloc_conv: 1,
+                                               update_interval: update_intv,
+                                               is_stop: false,
+                                               timeout: timeout,
+                                           })),
+           })
     }
 
     pub fn input_by_conv(&mut self, conv: u32, buf: &mut [u8]) -> io::Result<bool> {
-        match self.sessions_mut().get_mut(&conv) {
+        let mut inner = self.inner.borrow_mut();
+
+        match inner.sessions.get_mut(&conv) {
             None => Ok(false),
             Some(session) => {
                 session.input(buf)?;
@@ -50,31 +70,70 @@ impl KcpSessionUpdater {
     }
 
     pub fn remove_by_conv(&mut self, conv: u32) {
-        let mut ses = self.sessions_mut();
-        ses.remove(&conv);
+        let mut inner = self.inner.borrow_mut();
+        inner.sessions.remove(&conv);
     }
 
     pub fn insert_by_conv(&mut self, conv: u32, s: KcpServerSession) {
-        let mut ses = self.sessions_mut();
-        ses.insert(conv, s);
+        let mut inner = self.inner.borrow_mut();
+        inner.sessions.insert(conv, s);
     }
 
     /// Get one unused `conv`
     pub fn get_free_conv(&mut self) -> u32 {
-        let ses = self.sessions.borrow();
+        let mut inner = self.inner.borrow_mut();
 
-        let mut conv = self.alloc_conv;
-        while ses.contains_key(&conv) {
-            let (c, _) = self.alloc_conv.overflowing_add(1);
-            self.alloc_conv = c;
-            if self.alloc_conv == 0 {
-                self.alloc_conv = 1;
+        let mut conv = inner.alloc_conv;
+        while inner.sessions.contains_key(&conv) {
+            let (c, _) = inner.alloc_conv.overflowing_add(1);
+            inner.alloc_conv = c;
+            if inner.alloc_conv == 0 {
+                inner.alloc_conv = 1;
             }
 
-            conv = self.alloc_conv;
+            conv = inner.alloc_conv;
         }
 
         conv
+    }
+
+    /// Stop updater
+    pub fn stop(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.is_stop = true;
+    }
+}
+
+impl Stream for KcpSessionUpdater {
+    type Item = ();
+    type Error = io::Error;
+    fn poll(&mut self) -> Poll<Option<()>, io::Error> {
+        let mut inner = self.inner.borrow_mut();
+        try_ready!(inner.timeout.poll());
+
+        let mut finished = Vec::new();
+        for (conv, ses) in &mut inner.sessions {
+            match ses.poll() {
+                Ok(Async::NotReady) => {}
+                Ok(Async::Ready(Some(()))) => {}
+                Ok(Async::Ready(None)) => {
+                    finished.push(*conv);
+                }
+                Err(err) => {
+                    error!("[SESS] Update conv={} err: {:?}", conv, err);
+                    finished.push(*conv);
+                }
+            }
+        }
+
+        for conv in finished {
+            inner.sessions.remove(&conv);
+        }
+
+        let next = Instant::now() + inner.update_interval;
+        inner.timeout.reset(next);
+
+        Ok(Async::Ready(Some(())))
     }
 }
 
@@ -91,7 +150,7 @@ pub enum KcpSessionMode {
 /// Session of a KCP conversation
 pub struct KcpSession {
     kcp: SharedKcp,
-    timer: Timeout,
+    timer: Option<Timeout>,
     addr: SocketAddr,
     expire_dur: Duration,
     mode: KcpSessionMode,
@@ -106,7 +165,10 @@ impl KcpSession {
                -> io::Result<KcpSession> {
         let n = KcpSession {
             kcp: kcp,
-            timer: Timeout::new(Duration::from_secs(0), handle)?,
+            timer: match mode {
+                KcpSessionMode::Client => Some(Timeout::new(Duration::from_secs(0), handle)?),
+                KcpSessionMode::Server => None,
+            },
             addr: addr,
             expire_dur: expire_dur,
             mode: mode,
@@ -144,7 +206,11 @@ impl KcpSession {
     /// Called every tick
     pub fn update(&mut self) -> io::Result<()> {
         let next = self.kcp.update()?;
-        self.timer.reset(next);
+
+        if let Some(ref mut timer) = self.timer {
+            timer.reset(next);
+        }
+
         Ok(())
     }
 
@@ -168,7 +234,9 @@ impl KcpSession {
 
     /// Pull like a stream
     pub fn poll(&mut self) -> Poll<Option<()>, io::Error> {
-        try_ready!(self.timer.poll());
+        if let Some(ref mut timer) = self.timer {
+            try_ready!(timer.poll());
+        }
 
         // Session is already expired, drop this session
         if self.is_expired() {
@@ -212,22 +280,15 @@ impl KcpSession {
 pub struct KcpServerSession {
     session: SharedKcpSession,
     readiness: SetReadiness,
-    updater: KcpSessionUpdater,
 }
 
 impl KcpServerSession {
-    pub fn new(sess: SharedKcpSession, r: SetReadiness, u: &mut KcpSessionUpdater) -> KcpServerSession {
+    pub fn new(sess: SharedKcpSession, r: SetReadiness) -> KcpServerSession {
         let sess = KcpServerSession {
             session: sess,
             readiness: r,
-            updater: u.clone(),
         };
 
-        // Register it
-        {
-            let mss = sess.session.borrow();
-            u.insert_by_conv(mss.kcp.conv(), sess.clone());
-        }
         sess
     }
 
@@ -253,8 +314,7 @@ impl Stream for KcpServerSession {
         let mut sess = self.session.borrow_mut();
         match sess.poll() {
             Err(err) => {
-                // Session is closed, remove itself from updater
-                self.updater.remove_by_conv(sess.kcp.conv());
+                // Session is closed
                 trace!("[SESS] Close and remove addr={} conv={}, err: {}", sess.addr, sess.kcp.conv(), err);
 
                 // Awake pending reads
@@ -264,8 +324,7 @@ impl Stream for KcpServerSession {
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Ok(Async::Ready(Some(x))) => Ok(Async::Ready(Some(x))),
             Ok(Async::Ready(None)) => {
-                // Session is closed, remove itself from updater
-                self.updater.remove_by_conv(sess.kcp.conv());
+                // Session is closed
                 trace!("[SESS] Close and remove addr={} conv={}", sess.addr, sess.kcp.conv());
 
                 // Awake pending reads

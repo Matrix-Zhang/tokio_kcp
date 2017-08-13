@@ -1,8 +1,9 @@
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::Duration;
 
-use futures::{Async, Poll, Stream};
+use futures::{Async, Future, Poll, Stream};
 use kcp::{get_conv, set_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -41,13 +42,20 @@ impl KcpListener {
     ///
     /// The returned listener is ready for accepting connections.
     pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
+        let updater = KcpSessionUpdater::new(Duration::from_millis(5), handle)?;
+
+        let run_updater = updater.clone();
+        handle.spawn(run_updater.for_each(|_| Ok(())).map_err(|err| {
+                                                                  error!("Failed to update sessions, err: {:?}", err);
+                                                              }));
+
         UdpSocket::bind(addr, handle).map(|udp| {
             let shared_udp = Rc::new(udp);
             let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
 
             KcpListener {
                 udp: shared_udp,
-                sessions: KcpSessionUpdater::new(),
+                sessions: updater,
                 handle: handle.clone(),
                 config: config,
                 buf: vec![0u8; config.mtu.unwrap_or(1400)],

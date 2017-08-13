@@ -199,21 +199,23 @@ impl Drop for KcpCell {
 
 impl KcpCell {
     fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
-        match self.kcp.input(buf) {
-            Ok(..) => {}
-            Err(KcpError::ConvInconsistent(..)) => {}
-            Err(err) => return Err(err),
-        }
+        // match self.kcp.input(buf) {
+        //     Ok(..) => {}
+        //     Err(KcpError::ConvInconsistent(..)) => {}
+        //     Err(err) => return Err(err),
+        // }
+        self.kcp.input(buf)?;
         self.last_update = Instant::now();
         Ok(())
     }
 
     fn input_self(&mut self, n: usize) -> KcpResult<()> {
-        match self.kcp.input(&self.recv_buf[..n]) {
-            Ok(..) => {}
-            Err(KcpError::ConvInconsistent(..)) => {}
-            Err(err) => return Err(err),
-        }
+        // match self.kcp.input(&self.recv_buf[..n]) {
+        //     Ok(..) => {}
+        //     Err(KcpError::ConvInconsistent(..)) => {}
+        //     Err(err) => return Err(err),
+        // }
+        self.kcp.input(&self.recv_buf[..n])?;
         self.last_update = Instant::now();
         Ok(())
     }

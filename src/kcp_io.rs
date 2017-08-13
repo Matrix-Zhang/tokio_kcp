@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use futures::{Future, Stream};
-use kcp::{Error as KcpError, get_conv};
+use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 use tokio_core::reactor::Handle;
 
@@ -81,10 +81,7 @@ impl BufRead for KcpIo {
                 self.read_pos = 0;
                 self.read_cap = n;
 
-                if n != 0 {
-                    let buf = &self.read_buf[..n];
-                    trace!("[RECV] kcp.recv size={} conv={} {:?}", n, get_conv(buf), ::debug::BsDebug(&buf));
-                }
+                trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
 
                 break;
             }

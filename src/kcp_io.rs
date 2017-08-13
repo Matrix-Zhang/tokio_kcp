@@ -81,8 +81,10 @@ impl BufRead for KcpIo {
                 self.read_pos = 0;
                 self.read_cap = n;
 
-                let buf = &self.read_buf[..n];
-                trace!("[RECV] kcp.recv size={} conv={} {:?}", n, get_conv(buf), ::debug::BsDebug(&buf));
+                if n != 0 {
+                    let buf = &self.read_buf[..n];
+                    trace!("[RECV] kcp.recv size={} conv={} {:?}", n, get_conv(buf), ::debug::BsDebug(&buf));
+                }
 
                 break;
             }

@@ -81,7 +81,7 @@ impl KcpListener {
         loop {
             let (size, addr) = self.udp.recv_from(&mut self.buf)?;
 
-            let mut buf = &mut self.buf[..size];
+            let buf = &mut self.buf[..size];
             let mut conv = get_conv(&*buf);
             trace!("[RECV] size={} conv={} addr={} {:?}", size, conv, addr, ::debug::BsDebug(buf));
 

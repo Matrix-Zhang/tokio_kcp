@@ -254,13 +254,13 @@ impl KcpSession {
                 // Take over the UDP's control
                 // Because in client mode, when the Stream is closed, session is the only one to be responsible
                 // for receving data from udp and input to kcp.
-                self.kcp.fetch()?;
+                let _ = self.kcp.fetch();
             }
 
-            if self.can_close() {
-                trace!("[SESS] addr={} conv={} closing", self.addr, self.kcp.conv());
-                return Ok(Async::Ready(None));
-            }
+            // if self.can_close() {
+            //     trace!("[SESS] addr={} conv={} closing", self.addr, self.kcp.conv());
+            //     return Ok(Async::Ready(None));
+            // }
         }
 
         Ok(Async::Ready(Some(())))

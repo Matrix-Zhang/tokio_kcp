@@ -199,28 +199,38 @@ impl Drop for KcpCell {
 
 impl KcpCell {
     fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
-        // match self.kcp.input(buf) {
-        //     Ok(..) => {}
-        //     Err(KcpError::ConvInconsistent(..)) => {}
-        //     Err(err) => return Err(err),
-        // }
-        self.kcp.input(buf)?;
+        match self.kcp.input(buf) {
+            Ok(..) => {}
+            Err(KcpError::ConvInconsistent(expected, actual)) => {
+                trace!("[INPUT] Conv expected={} actual={} ignored", expected, actual);
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+        // self.kcp.input(buf)?;
         self.last_update = Instant::now();
         Ok(())
     }
 
     fn input_self(&mut self, n: usize) -> KcpResult<()> {
-        // match self.kcp.input(&self.recv_buf[..n]) {
-        //     Ok(..) => {}
-        //     Err(KcpError::ConvInconsistent(..)) => {}
-        //     Err(err) => return Err(err),
-        // }
-        self.kcp.input(&self.recv_buf[..n])?;
+        match self.kcp.input(&self.recv_buf[..n]) {
+            Ok(..) => {}
+            Err(KcpError::ConvInconsistent(expected, actual)) => {
+                trace!("[INPUT] Conv expected={} actual={} ignored", expected, actual);
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+        // self.kcp.input(&self.recv_buf[..n])?;
         self.last_update = Instant::now();
         Ok(())
     }
 
     fn fetch(&mut self) -> KcpResult<()> {
+        if let Async::NotReady = self.udp.poll_read() {
+            return Ok(());
+        }
+
         // Initialize with MTU
         if self.recv_buf.len() < self.kcp.mtu() {
             let mtu = self.kcp.mtu();

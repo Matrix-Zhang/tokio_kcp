@@ -22,7 +22,7 @@ use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_io::AsyncRead;
 use tokio_io::io::copy;
 
-use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig, KcpStream};
+use tokio_kcp::{KcpClientSessionUpdater, KcpConfig, KcpListener, KcpNoDelayConfig, KcpStream};
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {
@@ -206,18 +206,21 @@ fn echo_bench(mode: TestMode) {
                                  panic!("Failed to run server: {:?}", err);
                              }));
 
+    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+
     let chandle = core.handle();
-    let cli = futures::lazy(|| KcpStream::connect_with_config(0, &addr, &handle, &config)).and_then(move |s| {
-        let (r, w) = s.split();
-        let w_fut = LoopSender::new(w, 1000, &chandle);
-        let r_fut = LoopReader::new(mode, r, 1000);
-        // r_fut.join(w_fut)
-        r_fut.select2(w_fut).then(|r| match r {
-                                      Ok(..) => Ok(()),
-                                      Err(Either::A((err, ..))) => Err(err),
-                                      Err(Either::B((err, ..))) => Err(err),
-                                  })
-    });
+    let cli = futures::lazy(|| KcpStream::connect_with_config(0, &addr, &handle, &mut updater, &config))
+        .and_then(move |s| {
+            let (r, w) = s.split();
+            let w_fut = LoopSender::new(w, 1000, &chandle);
+            let r_fut = LoopReader::new(mode, r, 1000);
+            // r_fut.join(w_fut)
+            r_fut.select2(w_fut).then(|r| match r {
+                                          Ok(..) => Ok(()),
+                                          Err(Either::A((err, ..))) => Err(err),
+                                          Err(Either::B((err, ..))) => Err(err),
+                                      })
+        });
 
     core.run(cli).unwrap();
 }

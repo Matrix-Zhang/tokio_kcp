@@ -45,7 +45,7 @@ impl KcpNoDelayConfig {
 }
 
 /// Kcp Config
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct KcpConfig {
     /// Max Transmission Unit
     pub mtu: Option<usize>,
@@ -61,6 +61,26 @@ pub struct KcpConfig {
     pub session_expire: Option<Duration>,
     /// Fast resend
     pub fast_resend: Option<u32>,
+    /// Flush KCP state immediately after write
+    pub flush_write: bool,
+    /// Flush ACKs immediately after input
+    pub flush_acks_input: bool,
+}
+
+impl Default for KcpConfig {
+    fn default() -> KcpConfig {
+        KcpConfig {
+            mtu: None,
+            interval: None,
+            nodelay: None,
+            wnd_size: None,
+            rx_minrto: None,
+            session_expire: None,
+            fast_resend: None,
+            flush_write: true,
+            flush_acks_input: true,
+        }
+    }
 }
 
 impl KcpConfig {

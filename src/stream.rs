@@ -11,7 +11,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use config::KcpConfig;
 use kcp::get_conv;
 use kcp_io::{ClientKcpIo, ServerKcpIo};
-use session::KcpSessionUpdater;
+use session::{KcpClientSessionUpdater, KcpServerSessionUpdater};
 use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
 
 /// KCP client for interacting with server
@@ -35,8 +35,12 @@ impl KcpStream {
     /// Opens a KCP connection to a remote host.
     ///
     /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
-    pub fn connect(conv: u32, addr: &SocketAddr, handle: &Handle) -> io::Result<KcpStream> {
-        KcpStream::connect_with_config(conv, addr, handle, &KcpConfig::default())
+    pub fn connect(conv: u32,
+                   addr: &SocketAddr,
+                   handle: &Handle,
+                   u: &mut KcpClientSessionUpdater)
+                   -> io::Result<KcpStream> {
+        KcpStream::connect_with_config(conv, addr, handle, u, &KcpConfig::default())
     }
 
     /// Opens a KCP connection to a remote host.
@@ -45,6 +49,7 @@ impl KcpStream {
     pub fn connect_with_config(conv: u32,
                                addr: &SocketAddr,
                                handle: &Handle,
+                               u: &mut KcpClientSessionUpdater,
                                config: &KcpConfig)
                                -> io::Result<KcpStream> {
         let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
@@ -61,7 +66,7 @@ impl KcpStream {
         };
 
         let local_addr = udp.local_addr().expect("Failed to get local addr");
-        let io = ClientKcpIo::new(kcp, local_addr, sess_exp, &handle)?;
+        let io = ClientKcpIo::new(kcp, local_addr, sess_exp, u)?;
         Ok(KcpStream::new(udp, io))
     }
 
@@ -145,7 +150,7 @@ impl ServerKcpStream {
                            output_handle: KcpOutputHandle,
                            addr: &SocketAddr,
                            handle: &Handle,
-                           u: &mut KcpSessionUpdater,
+                           u: &mut KcpServerSessionUpdater,
                            config: &KcpConfig)
                            -> io::Result<ServerKcpStream> {
         let output = KcpOutput::new_with_handle(output_handle, *addr);
@@ -156,7 +161,7 @@ impl ServerKcpStream {
             None => Duration::from_secs(90),
         };
 
-        let io = ServerKcpIo::new(kcp, *addr, sess_exp, handle, u)?;
+        let io = ServerKcpIo::new(kcp, *addr, sess_exp, u)?;
         let io = PollEvented::new(io, handle)?;
         Ok(ServerKcpStream { io: io })
 

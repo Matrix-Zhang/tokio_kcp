@@ -22,7 +22,7 @@ use futures::future::Either;
 use time::Timespec;
 use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_io::AsyncRead;
-use tokio_kcp::{KcpConfig, KcpNoDelayConfig, KcpStream};
+use tokio_kcp::{KcpClientSessionUpdater, KcpConfig, KcpNoDelayConfig, KcpStream};
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {
@@ -218,11 +218,15 @@ fn main() {
 
     let mut fut: Option<Box<Future<Item = (), Error = io::Error>>> = None;
 
+    let handle = core.handle();
+    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+
     for i in 0..count {
         let handle = core.handle();
         let chandle = handle.clone();
 
-        let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &config))
+        let mut updater = updater.clone();
+        let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &mut updater, &config))
             .and_then(move |s| {
                 let (r, w) = s.split();
                 let w_fut = LoopSender::new(w, 1000, &chandle);
@@ -243,5 +247,10 @@ fn main() {
         }
     }
 
-    core.run(fut.unwrap()).unwrap();
+    let fut = fut.unwrap();
+    let fut = fut.then(|_| {
+                           updater.stop();
+                           Ok::<(), ()>(())
+                       });
+    core.run(fut).unwrap();
 }

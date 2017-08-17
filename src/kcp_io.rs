@@ -5,12 +5,11 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::Duration;
 
-use futures::{Future, Stream};
 use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
-use tokio_core::reactor::Handle;
 
-use session::{KcpClientSession, KcpServerSession, KcpSession, KcpSessionMode, KcpSessionUpdater};
+use session::{KcpClientSession, KcpClientSessionUpdater, KcpServerSession, KcpServerSessionUpdater, KcpSession,
+              KcpSessionMode};
 use skcp::SharedKcp;
 
 /// Base Io object for KCP
@@ -23,16 +22,9 @@ struct KcpIo {
 
 impl KcpIo {
     pub fn new(kcp: SharedKcp) -> KcpIo {
-        let mtu = kcp.mtu();
-        trace!("[INIT] KcpIo mtu {}", mtu);
-        let mut buf = Vec::with_capacity(mtu);
-        unsafe {
-            buf.set_len(mtu);
-        }
-
         KcpIo {
             kcp: kcp,
-            read_buf: buf,
+            read_buf: Vec::new(),
             read_pos: 0,
             read_cap: 0,
         }
@@ -58,11 +50,21 @@ impl KcpIo {
     pub fn can_read(&self) -> bool {
         self.kcp.can_read()
     }
+
+    fn buf_remaining(&self) -> usize {
+        self.read_cap - self.read_pos
+    }
 }
 
 impl BufRead for KcpIo {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.read_pos >= self.read_cap {
+            if self.read_buf.is_empty() {
+                let mtu = self.kcp.mtu();
+                trace!("[INIT] KcpIo mtu {}", mtu);
+                self.read_buf.resize(mtu, 0);
+            }
+
             loop {
                 let n = match self.kcp.recv(&mut self.read_buf) {
                     Ok(n) => n,
@@ -97,6 +99,22 @@ impl BufRead for KcpIo {
 
 impl Read for KcpIo {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.buf_remaining() == 0 {
+            // Try to read directly
+            match self.kcp.recv(buf) {
+                Ok(n) => {
+                    trace!("[RECV] KcpIo.read directly size={}", n);
+                    return Ok(n);
+                }
+                Err(KcpError::UserBufTooSmall) => {
+                    trace!("[RECV] KcpIo.read directly peeksize={} buf size={} too small",
+                           self.kcp.peeksize(),
+                           buf.len());
+                }
+                Err(err) => return Err(From::from(err)),
+            }
+        }
+
         let nread = {
             let mut available = self.fill_buf()?;
             available.read(buf)?
@@ -136,15 +154,19 @@ pub struct ClientKcpIo {
 }
 
 impl ClientKcpIo {
-    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration, handle: &Handle) -> io::Result<ClientKcpIo> {
-        let mut sess = KcpSession::new(kcp.clone(), addr, expire_dur, handle, KcpSessionMode::Client)?;
+    pub fn new(kcp: SharedKcp,
+               addr: SocketAddr,
+               expire_dur: Duration,
+               u: &mut KcpClientSessionUpdater)
+               -> io::Result<ClientKcpIo> {
+        let mut sess = KcpSession::new(kcp.clone(), addr, expire_dur, KcpSessionMode::Client)?;
         sess.update()?; // Call update once it is created
         let sess = Rc::new(RefCell::new(sess));
         let sess = KcpClientSession::new(sess);
-        handle.spawn(sess.for_each(|_| Ok(())).map_err(|err| {
-                                                           error!("Failed to update KCP session: err: {:?}", err);
-                                                       }));
-        trace!("[CLIENT] Created stream bind addr={}", addr);
+
+        u.insert_by_conv(kcp.conv(), sess);
+
+        trace!("[CLIENT] Created stream bind addr={} conv={}", addr, kcp.conv());
         Ok(ClientKcpIo { io: KcpIo::new(kcp) })
     }
 
@@ -186,12 +208,12 @@ impl ServerKcpIo {
     pub fn new(kcp: SharedKcp,
                addr: SocketAddr,
                expire_dur: Duration,
-               handle: &Handle,
-               u: &mut KcpSessionUpdater)
+               u: &mut KcpServerSessionUpdater)
                -> io::Result<ServerKcpIo> {
-        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, handle, KcpSessionMode::Server)?;
+        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, KcpSessionMode::Server)?;
         let (reg, r) = Registration::new2();
         let sess = KcpServerSession::new(sess, r.clone());
+
         u.insert_by_conv(kcp.conv(), sess);
 
         Ok(ServerKcpIo {
@@ -245,76 +267,3 @@ impl Write for ServerKcpIo {
         self.io.flush()
     }
 }
-
-// impl KcpIo {
-//     pub fn new(shared_kcp: SharedKcp,
-//                addr: SocketAddr,
-//                handle: &Handle,
-//                owner: Option<KcpSessionUpdater>,
-//                expire_dur: Duration)
-//                -> io::Result<KcpIo> {
-//         let (registration, readiness) = Registration::new2();
-//         let timer = Timeout::new_at(Instant::now(), handle)?;
-
-//         let elapsed = Rc::new(RefCell::new(Instant::now()));
-//         let close_flag = Rc::new(RefCell::new(false));
-//         let session = SharedKcpSession::new(shared_kcp.clone(),
-//                                             timer,
-//                                             elapsed.clone(),
-//                                             readiness.clone(),
-//                                             addr,
-//                                             owner,
-//                                             close_flag.clone(),
-//                                             expire_dur)?;
-//         handle.spawn(session.for_each(|_| Ok(())).map_err(|err| {
-//                                                               error!("Failed to update KCP session: err: {:?}", err);
-//                                                           }));
-
-//         Ok(KcpIo {
-//                kcp: shared_kcp,
-//                registration: registration,
-//                readiness: readiness,
-//                last_update: elapsed,
-//                close_flag: close_flag,
-//                read_buf: vec![0u8; 65535],
-//                read_pos: 0,
-//                read_cap: 0,
-//            })
-//     }
-
-//     pub fn input_buf(&mut self, buf: &[u8]) -> io::Result<()> {
-//         {
-//             let mut last_update = self.last_update.borrow_mut();
-//             *last_update = Instant::now();
-//             let mut kcp = self.kcp.borrow_mut();
-//             kcp.input(buf)?;
-//             trace!("[INPUT] KcpIo.input size={}", buf.len());
-//         }
-//         self.set_readable()
-//     }
-
-//     fn set_readable(&mut self) -> io::Result<()> {
-//         self.readiness.set_readiness(Ready::readable())
-//     }
-
-//     pub fn can_read(&self) -> io::Result<bool> {
-//         let kcp = self.kcp.borrow();
-//         kcp.peeksize().map(|n| n != 0)
-//     }
-// }
-
-
-
-// impl Evented for KcpIo {
-//     fn register(&self, poll: &mio::Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-//         self.registration.register(poll, token, interest, opts)
-//     }
-
-//     fn reregister(&self, poll: &mio::Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
-//         self.registration.reregister(poll, token, interest, opts)
-//     }
-
-//     fn deregister(&self, poll: &mio::Poll) -> io::Result<()> {
-//         <Registration as Evented>::deregister(&self.registration, poll)
-//     }
-// }

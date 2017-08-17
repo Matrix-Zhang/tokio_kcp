@@ -190,6 +190,8 @@ struct KcpCell {
     recv_buf: Vec<u8>,
     expired: bool,
     sent_first: bool,
+    flush_write: bool,
+    flush_ack_input: bool,
 }
 
 impl Drop for KcpCell {
@@ -210,6 +212,11 @@ impl KcpCell {
         }
         // self.kcp.input(buf)?;
         self.last_update = Instant::now();
+
+        if self.flush_ack_input {
+            self.kcp.flush_ack()?;
+        }
+
         Ok(())
     }
 
@@ -224,6 +231,11 @@ impl KcpCell {
         }
         // self.kcp.input(&self.recv_buf[..n])?;
         self.last_update = Instant::now();
+
+        if self.flush_ack_input {
+            self.kcp.flush_ack()?;
+        }
+
         Ok(())
     }
 
@@ -283,6 +295,8 @@ impl SharedKcp {
                                             recv_buf: Vec::new(), // Do not initialize it yet.
                                             expired: false,
                                             sent_first: false,
+                                            flush_write: true,
+                                            flush_ack_input: true,
                                         })),
         }
     }
@@ -318,6 +332,11 @@ impl SharedKcp {
         let n = inner.kcp.send(buf)?;
         inner.sent_first = true;
         inner.last_update = Instant::now();
+
+        if inner.flush_write {
+            inner.kcp.flush()?;
+        }
+
         Ok(n)
     }
 
@@ -374,6 +393,7 @@ impl SharedKcp {
         inner.kcp.update(::current())?;
         let next = inner.kcp.check(::current());
         Ok(Instant::now() + Duration::from_millis(next as u64))
+        // Ok(Instant::now() + Duration::from_millis(5))
     }
 
     /// Check if send queue is empty
@@ -391,6 +411,7 @@ impl SharedKcp {
     /// Set is close
     pub fn close(&mut self) {
         let mut inner = self.inner.borrow_mut();
+        trace!("[KCP] Set close, conv={}", inner.kcp.conv());
         inner.is_closed = true;
     }
 

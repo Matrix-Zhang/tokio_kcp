@@ -8,14 +8,17 @@ extern crate mio;
 #[macro_use]
 extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_timer;
 extern crate time;
 #[macro_use]
 extern crate log;
+extern crate priority_queue;
 
 use time::Timespec;
 
 pub use self::config::{KcpConfig, KcpNoDelayConfig};
 pub use self::listener::{Incoming, KcpListener};
+pub use self::session::{KcpClientSessionUpdater, KcpServerSessionUpdater};
 pub use self::stream::{KcpStream, ServerKcpStream};
 
 mod skcp;

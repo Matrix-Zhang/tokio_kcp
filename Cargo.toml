@@ -12,12 +12,14 @@ repository = "https://github.com/Matrix-Zhang/tokio_kcp"
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
-kcp = "0.4"
+kcp = { path = "../kcp" }
 log = "0.3"
 mio = "0.6"
 time = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
+priority-queue = "0.3"
+tokio-timer = "0.1"
 
 [dev-dependencies]
 env_logger = "0.4.3"

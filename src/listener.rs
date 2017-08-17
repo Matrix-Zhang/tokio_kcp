@@ -1,22 +1,21 @@
 use std::io;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
 
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Poll, Stream};
 use kcp::{get_conv, set_conv};
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
 use config::KcpConfig;
-use session::KcpSessionUpdater;
+use session::KcpServerSessionUpdater;
 use skcp::KcpOutputHandle;
 use stream::ServerKcpStream;
 
 /// A KCP Socket server
 pub struct KcpListener {
     udp: Rc<UdpSocket>,
-    sessions: KcpSessionUpdater,
+    sessions: KcpServerSessionUpdater,
     handle: Handle,
     config: KcpConfig,
     buf: Vec<u8>,
@@ -42,13 +41,7 @@ impl KcpListener {
     ///
     /// The returned listener is ready for accepting connections.
     pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
-        let updater = KcpSessionUpdater::new(Duration::from_millis(5), handle)?;
-
-        let run_updater = updater.clone();
-        handle.spawn(run_updater.for_each(|_| Ok(())).map_err(|err| {
-                                                                  error!("Failed to update sessions, err: {:?}", err);
-                                                              }));
-
+        let updater = KcpServerSessionUpdater::new(handle)?;
         UdpSocket::bind(addr, handle).map(|udp| {
             let shared_udp = Rc::new(udp);
             let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);

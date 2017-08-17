@@ -4,6 +4,8 @@ extern crate tokio_core;
 extern crate tokio_kcp;
 extern crate tokio_io;
 extern crate env_logger;
+extern crate log;
+extern crate time;
 
 use std::env;
 use std::io::{self, Read, Write};
@@ -11,15 +13,35 @@ use std::net::SocketAddr;
 use std::thread;
 
 use bytes::{BufMut, BytesMut};
+use env_logger::LogBuilder;
 use futures::{Future, Sink, Stream};
 use futures::sync::mpsc;
+use log::LogRecord;
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
-use tokio_kcp::KcpStream;
+use tokio_kcp::{KcpClientSessionUpdater, KcpStream};
 
 fn main() {
-    let _ = env_logger::init();
+    let mut log_builder = LogBuilder::new();
+    // Default filter
+    log_builder.format(|record: &LogRecord| {
+        let now = time::now();
+        format!("[{}-{:02}-{:02}][{:02}:{:02}:{:02}.{}][{}] {}",
+                1900 + now.tm_year,
+                now.tm_mon + 1,
+                now.tm_mday,
+                now.tm_hour,
+                now.tm_min,
+                now.tm_sec,
+                now.tm_nsec / 100_000,
+                record.level(),
+                record.args())
+    });
+    if let Ok(env_conf) = env::var("RUST_LOG") {
+        log_builder.parse(&env_conf);
+    }
+    log_builder.init().unwrap();
 
     let addr = env::args()
         .nth(1)
@@ -31,10 +53,12 @@ fn main() {
     let (stdin_tx, stdin_rx) = mpsc::channel(0);
     thread::spawn(|| read_stdin(stdin_tx));
 
-    let stdin_rx = stdin_rx.map_err(|_| panic!());
+    let stdin_rx = stdin_rx.map_err(|err| panic!("RX err: {:?}", err));
     let mut stdout = io::stdout();
 
-    let client = futures::lazy(|| KcpStream::connect(0, &addr, &handle)).and_then(|stream| {
+    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+
+    let client = futures::lazy(|| KcpStream::connect(0, &addr, &handle, &mut updater)).and_then(|stream| {
         let (sink, stream) = stream.framed(Bytes).split();
         let send_stdin = stdin_rx.forward(sink);
         let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));

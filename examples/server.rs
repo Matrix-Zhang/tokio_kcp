@@ -3,12 +3,16 @@ extern crate tokio_core;
 extern crate tokio_kcp;
 extern crate tokio_io;
 extern crate env_logger;
+extern crate log;
+extern crate time;
 
 use std::env;
 use std::net::SocketAddr;
 
+use env_logger::LogBuilder;
 use futures::future::Future;
 use futures::stream::Stream;
+use log::LogRecord;
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::io::copy;
@@ -58,7 +62,25 @@ fn get_config(mode: TestMode) -> KcpConfig {
 }
 
 fn main() {
-    let _ = env_logger::init();
+    let mut log_builder = LogBuilder::new();
+    // Default filter
+    log_builder.format(|record: &LogRecord| {
+        let now = time::now();
+        format!("[{}-{:02}-{:02}][{:02}:{:02}:{:02}.{}][{}] {}",
+                1900 + now.tm_year,
+                now.tm_mon + 1,
+                now.tm_mday,
+                now.tm_hour,
+                now.tm_min,
+                now.tm_sec,
+                now.tm_nsec / 1000_000,
+                record.level(),
+                record.args())
+    });
+    if let Ok(env_conf) = env::var("RUST_LOG") {
+        log_builder.parse(&env_conf);
+    }
+    log_builder.init().unwrap();
 
     let addr = env::args()
         .nth(1)

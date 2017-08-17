@@ -12,7 +12,7 @@ repository = "https://github.com/Matrix-Zhang/tokio_kcp"
 [dependencies]
 bytes = "0.4"
 futures = "0.1"
-kcp = { path = "../kcp" }
+kcp = "0.4"
 log = "0.3"
 mio = "0.6"
 time = "0.1"

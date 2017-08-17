@@ -103,6 +103,7 @@ impl<S> KcpSessionUpdater<S>
 where
     S: Session + 'static,
 {
+    /// Create a new updater and then register it to the `Core`.
     pub fn new(handle: &Handle) -> io::Result<KcpSessionUpdater<S>> {
         let timeout = Timeout::new(Duration::from_secs(0), handle)?;
 
@@ -125,6 +126,7 @@ where
         Ok(u)
     }
 
+    #[doc(hidden)]
     pub fn input_by_conv(&mut self, conv: u32, buf: &mut [u8]) -> io::Result<bool> {
         let mut inner = self.inner.borrow_mut();
 
@@ -137,11 +139,7 @@ where
         }
     }
 
-    // pub fn remove_by_conv(&mut self, conv: u32) {
-    //     let mut inner = self.inner.borrow_mut();
-    //     inner.sessions.remove(&conv);
-    // }
-
+    #[doc(hidden)]
     pub fn insert_by_conv(&mut self, conv: u32, s: S) {
         let mut inner = self.inner.borrow_mut();
         inner.sessions.insert(conv, s);
@@ -153,6 +151,7 @@ where
     }
 
     /// Get one unused `conv`
+    #[doc(hidden)]
     pub fn get_free_conv(&mut self) -> u32 {
         let mut inner = self.inner.borrow_mut();
 
@@ -171,7 +170,7 @@ where
         }
     }
 
-    /// Stop updater
+    /// Stop updater and exit
     pub fn stop(&mut self) {
         let mut inner = self.inner.borrow_mut();
         inner.is_stop = true;

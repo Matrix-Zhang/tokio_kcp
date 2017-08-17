@@ -17,7 +17,7 @@ use time::Timespec;
 
 pub use self::config::{KcpConfig, KcpNoDelayConfig};
 pub use self::listener::{Incoming, KcpListener};
-pub use self::session::{KcpClientSessionUpdater, KcpServerSessionUpdater};
+pub use self::session::{KcpClientSessionUpdater, KcpServerSessionUpdater, KcpSessionUpdater};
 pub use self::stream::{KcpStream, ServerKcpStream};
 
 mod skcp;

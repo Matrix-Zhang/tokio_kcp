@@ -209,7 +209,8 @@ fn echo_bench(mode: TestMode) {
     let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
 
     let chandle = core.handle();
-    let cli = futures::lazy(|| KcpStream::connect_with_config(0, &addr, &handle, &mut updater, &config))
+    let mut cupdater = updater.clone();
+    let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &mut cupdater, &config))
         .and_then(move |s| {
             let (r, w) = s.split();
             let w_fut = LoopSender::new(w, 1000, &chandle);
@@ -220,7 +221,11 @@ fn echo_bench(mode: TestMode) {
                                           Err(Either::A((err, ..))) => Err(err),
                                           Err(Either::B((err, ..))) => Err(err),
                                       })
-        });
+        })
+        .then(|r| {
+                  updater.stop();
+                  r
+              });
 
     core.run(cli).unwrap();
 }

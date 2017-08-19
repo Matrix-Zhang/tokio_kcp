@@ -8,6 +8,8 @@ extern crate mio;
 #[macro_use]
 extern crate tokio_core;
 extern crate tokio_io;
+extern crate tokio_proto;
+extern crate tokio_service;
 extern crate time;
 #[macro_use]
 extern crate log;
@@ -17,6 +19,7 @@ use time::Timespec;
 
 pub use self::config::{KcpConfig, KcpNoDelayConfig};
 pub use self::listener::{Incoming, KcpListener};
+pub use self::server::KcpServer;
 pub use self::session::{KcpClientSessionUpdater, KcpServerSessionUpdater, KcpSessionUpdater};
 pub use self::stream::{KcpStream, ServerKcpStream};
 
@@ -25,6 +28,7 @@ mod session;
 mod kcp_io;
 mod stream;
 mod listener;
+mod server;
 mod config;
 mod debug;
 

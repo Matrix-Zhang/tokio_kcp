@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
@@ -15,10 +15,12 @@ futures = "0.1"
 kcp = "0.4"
 log = "0.3"
 mio = "0.6"
+priority-queue = "0.3"
 time = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
-priority-queue = "0.3"
+tokio-proto = "0.1"
+tokio-service = "0.1"
 
 [dev-dependencies]
 env_logger = "0.4.3"

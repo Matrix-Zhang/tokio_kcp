@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::cmp::{Ord, Ordering};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
 use std::io;
 use std::net::SocketAddr;
@@ -18,6 +18,7 @@ use skcp::SharedKcp;
 /// KCP session features
 pub trait Session: Stream<Item = Instant, Error = io::Error> {
     fn input(&mut self, buf: &[u8]) -> io::Result<()>;
+    fn addr(&self) -> SocketAddr;
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]
@@ -54,6 +55,7 @@ where
     timeout: Timeout,
     conv_queue: PriorityQueue<u32, InstantOrd>,
     task: Option<Task>,
+    known_endpoint: HashMap<SocketAddr, HashSet<u32>>,
 }
 
 impl<S> Debug for KcpSessionUpdaterInner<S>
@@ -115,6 +117,7 @@ where
                                             timeout: timeout,
                                             conv_queue: PriorityQueue::new(),
                                             task: None,
+                                            known_endpoint: HashMap::new(),
                                         })),
         };
 
@@ -127,8 +130,17 @@ where
     }
 
     #[doc(hidden)]
-    pub fn input_by_conv(&mut self, conv: u32, buf: &mut [u8]) -> io::Result<bool> {
+    pub fn input_by_conv(&mut self, conv: u32, endpoint: &SocketAddr, buf: &mut [u8]) -> io::Result<bool> {
         let mut inner = self.inner.borrow_mut();
+
+        if conv == 0 {
+            // Ask for allocating??
+            // So we are in server mode, each endpoint to be paired with one conv
+            if inner.known_endpoint.contains_key(endpoint) {
+                trace!("[SESS] addr={} with conv=0 retransmitted", endpoint);
+                return Ok(true);
+            }
+        }
 
         match inner.sessions.get_mut(&conv) {
             None => Ok(false),
@@ -141,9 +153,18 @@ where
 
     #[doc(hidden)]
     pub fn insert_by_conv(&mut self, conv: u32, s: S) {
+        let endpoint = s.addr();
+
         let mut inner = self.inner.borrow_mut();
         inner.sessions.insert(conv, s);
         inner.conv_queue.push(conv, InstantOrd(Instant::now()));
+
+        {
+            let mut convs = inner.known_endpoint
+                                 .entry(endpoint)
+                                 .or_insert(HashSet::new());
+            convs.insert(conv);
+        }
 
         if let Some(task) = inner.task.take() {
             task.notify();
@@ -222,7 +243,19 @@ where
         }
 
         for conv in finished {
-            inner.sessions.remove(&conv);
+            if let Some(sess) = inner.sessions.remove(&conv) {
+                let addr = sess.addr();
+                let mut should_remove = false;
+                if let Some(x) = inner.known_endpoint.get_mut(&addr) {
+                    x.remove(&conv);
+
+                    should_remove = x.is_empty();
+                }
+
+                if should_remove {
+                    inner.known_endpoint.remove(&addr);
+                }
+            }
         }
 
         for (conv, inst) in newly_push {
@@ -415,6 +448,11 @@ impl Session for KcpServerSession {
             Ok(())
         }
     }
+
+    fn addr(&self) -> SocketAddr {
+        let sess = self.session.borrow();
+        *sess.addr()
+    }
 }
 
 impl Debug for KcpServerSession {
@@ -451,5 +489,10 @@ impl Session for KcpClientSession {
     fn input(&mut self, buf: &[u8]) -> io::Result<()> {
         let mut sess = self.session.borrow_mut();
         sess.input(buf)
+    }
+
+    fn addr(&self) -> SocketAddr {
+        let sess = self.session.borrow();
+        *sess.addr()
     }
 }

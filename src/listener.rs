@@ -98,7 +98,7 @@ impl KcpListener {
             let mut conv = get_conv(&*buf);
             trace!("[RECV] size={} conv={} addr={} {:?}", size, conv, addr, ::debug::BsDebug(buf));
 
-            if self.sessions.input_by_conv(conv, buf)? {
+            if self.sessions.input_by_conv(conv, &addr, buf)? {
                 continue;
             }
 

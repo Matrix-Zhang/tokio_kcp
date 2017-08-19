@@ -160,9 +160,9 @@ where
         inner.conv_queue.push(conv, InstantOrd(Instant::now()));
 
         {
-            let mut convs = inner.known_endpoint
-                                 .entry(endpoint)
-                                 .or_insert(HashSet::new());
+            let convs = inner.known_endpoint
+                             .entry(endpoint)
+                             .or_insert(HashSet::new());
             convs.insert(conv);
         }
 

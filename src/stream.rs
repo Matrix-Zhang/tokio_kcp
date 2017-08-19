@@ -14,6 +14,9 @@ use kcp_io::{ClientKcpIo, ServerKcpIo};
 use session::{KcpClientSessionUpdater, KcpServerSessionUpdater};
 use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
 
+/// Default session expired timeout
+const SESSION_EXPIRED_SECONDS: u64 = 90;
+
 /// KCP client for interacting with server
 pub struct KcpStream {
     udp: Rc<UdpSocket>,
@@ -62,7 +65,7 @@ impl KcpStream {
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,
-            None => Duration::from_secs(90),
+            None => Duration::from_secs(SESSION_EXPIRED_SECONDS),
         };
 
         let local_addr = udp.local_addr().expect("Failed to get local addr");
@@ -158,7 +161,7 @@ impl ServerKcpStream {
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,
-            None => Duration::from_secs(90),
+            None => Duration::from_secs(SESSION_EXPIRED_SECONDS),
         };
 
         let io = ServerKcpIo::new(kcp, *addr, sess_exp, u)?;

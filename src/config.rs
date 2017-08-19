@@ -65,6 +65,8 @@ pub struct KcpConfig {
     pub flush_write: bool,
     /// Flush ACKs immediately after input
     pub flush_acks_input: bool,
+    /// Stream mode
+    pub stream: bool,
 }
 
 impl Default for KcpConfig {
@@ -79,6 +81,7 @@ impl Default for KcpConfig {
             fast_resend: None,
             flush_write: true,
             flush_acks_input: true,
+            stream: false,
         }
     }
 }

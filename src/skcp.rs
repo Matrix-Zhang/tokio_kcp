@@ -270,14 +270,24 @@ pub struct SharedKcp {
 }
 
 impl SharedKcp {
-    pub fn new(c: &KcpConfig, conv: u32, udp: Rc<UdpSocket>, peer: SocketAddr, handle: &Handle) -> SharedKcp {
+    pub fn new(c: &KcpConfig,
+               conv: u32,
+               udp: Rc<UdpSocket>,
+               peer: SocketAddr,
+               handle: &Handle,
+               stream: bool)
+               -> SharedKcp {
         let output = KcpOutput::new(udp, peer, handle);
-        SharedKcp::new_with_output(c, conv, output)
+        SharedKcp::new_with_output(c, conv, output, stream)
     }
 
-    pub fn new_with_output(c: &KcpConfig, conv: u32, output: KcpOutput) -> SharedKcp {
+    pub fn new_with_output(c: &KcpConfig, conv: u32, output: KcpOutput, stream: bool) -> SharedKcp {
         let udp = output.udp();
-        let mut kcp = Kcp::new(conv, output);
+        let mut kcp = if stream {
+            Kcp::new_stream(conv, output)
+        } else {
+            Kcp::new(conv, output)
+        };
         c.apply_config(&mut kcp);
 
         // Ask server to allocate one

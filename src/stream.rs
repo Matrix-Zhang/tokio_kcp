@@ -58,7 +58,7 @@ impl KcpStream {
         let udp = Rc::new(udp);
 
         // Create a standalone output kcp
-        let kcp = SharedKcp::new(config, conv, udp.clone(), *addr, handle);
+        let kcp = SharedKcp::new(config, conv, udp.clone(), *addr, handle, config.stream);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,
@@ -154,7 +154,7 @@ impl ServerKcpStream {
                            config: &KcpConfig)
                            -> io::Result<ServerKcpStream> {
         let output = KcpOutput::new_with_handle(output_handle, *addr);
-        let kcp = SharedKcp::new_with_output(config, conv, output);
+        let kcp = SharedKcp::new_with_output(config, conv, output, config.stream);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,

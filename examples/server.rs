@@ -73,7 +73,7 @@ fn main() {
                 now.tm_hour,
                 now.tm_min,
                 now.tm_sec,
-                now.tm_nsec / 1000_000,
+                now.tm_nsec / 1_000_000,
                 record.level(),
                 record.args())
     });

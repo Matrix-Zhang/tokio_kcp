@@ -366,12 +366,10 @@ pub struct KcpServerSession {
 
 impl KcpServerSession {
     pub fn new(sess: SharedKcpSession, r: SetReadiness) -> KcpServerSession {
-        let sess = KcpServerSession {
+        KcpServerSession {
             session: sess,
             readiness: r,
-        };
-
-        sess
+        }
     }
 }
 

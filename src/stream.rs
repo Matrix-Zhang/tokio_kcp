@@ -54,7 +54,7 @@ impl KcpStream {
                                -> io::Result<KcpStream> {
         let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
-        let udp = UdpSocket::bind(&local, &handle)?;
+        let udp = UdpSocket::bind(&local, handle)?;
         let udp = Rc::new(udp);
 
         // Create a standalone output kcp
@@ -154,7 +154,7 @@ impl ServerKcpStream {
                            config: &KcpConfig)
                            -> io::Result<ServerKcpStream> {
         let output = KcpOutput::new_with_handle(output_handle, *addr);
-        let kcp = SharedKcp::new_with_output(&config, conv, output);
+        let kcp = SharedKcp::new_with_output(config, conv, output);
 
         let sess_exp = match config.session_expire {
             Some(dur) => dur,

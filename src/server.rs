@@ -7,6 +7,7 @@ use std::thread;
 use {KcpListener, ServerKcpStream};
 use futures::future::{Future, Then};
 use futures::stream::Stream;
+use net2;
 use tokio_core::reactor::{Core, Handle};
 use tokio_proto::BindServer;
 use tokio_service::{NewService, Service};
@@ -22,7 +23,6 @@ use tokio_service::{NewService, Service};
 pub struct KcpServer<Kind, P> {
     _kind: PhantomData<Kind>,
     proto: Arc<P>,
-    threads: usize,
     addr: SocketAddr,
 }
 
@@ -47,7 +47,6 @@ where
         KcpServer {
             _kind: PhantomData,
             proto: Arc::new(protocol),
-            threads: 1,
             addr: addr,
         }
     }
@@ -55,14 +54,6 @@ where
     /// Set the address for the server.
     pub fn addr(&mut self, addr: SocketAddr) {
         self.addr = addr;
-    }
-
-    /// Set the number of threads running simultaneous event loops (Unix only).
-    pub fn threads(&mut self, threads: usize) {
-        assert!(threads > 0);
-        if cfg!(unix) {
-            self.threads = threads;
-        }
     }
 
     /// Start up the server, providing the given service on it.
@@ -106,24 +97,18 @@ where
         let proto = self.proto.clone();
         let new_service = Arc::new(new_service);
         let addr = self.addr;
-
-        let threads = (0..self.threads - 1)
-            .map(|i| {
-                let proto = proto.clone();
-                let new_service = new_service.clone();
-
-                thread::Builder::new()
-                    .name(format!("worker{}", i))
-                    .spawn(move || serve(proto, addr, &*new_service))
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
+        let thread = {
+            let proto = proto.clone();
+            let new_service = new_service.clone();
+            thread::Builder::new()
+                .name("kcp server's worker".into())
+                .spawn(move || serve(proto, addr, &*new_service))
+                .unwrap()
+        };
 
         serve(proto, addr, &*new_service);
 
-        for thread in threads {
-            thread.join().unwrap();
-        }
+        thread.join().unwrap();
     }
 }
 
@@ -198,5 +183,12 @@ where
 }
 
 fn listener(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
-    KcpListener::bind(addr, handle)
+    let udp = match *addr {
+        SocketAddr::V4(_) => net2::UdpBuilder::new_v4()?,
+        SocketAddr::V6(_) => net2::UdpBuilder::new_v6()?,
+    };
+    udp.reuse_address(true)?;
+    udp.bind(addr)
+       .and_then(|udp| KcpListener::from_std_udp(udp, handle))
+
 }

@@ -104,7 +104,7 @@ impl Future for KcpOutputQueue {
             {
                 let &(ref peer, ref pkt) = &inner.pkt_queue[0];
                 let n = try_nb!(inner.udp.send_to(&*pkt, peer));
-                trace!("[SEND] Delayed UDP peer={} conv={} size={} {:?}", peer, get_conv(&pkt), pkt.len(), pkt);
+                trace!("[SEND] Delayed UDP peer={} conv={} size={} {:?}", peer, get_conv(pkt), pkt.len(), pkt);
                 if n != pkt.len() {
                     error!("[SEND] Delayed Sent size={}, but packet is size={}", n, pkt.len());
                 }

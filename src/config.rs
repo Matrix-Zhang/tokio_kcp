@@ -3,7 +3,7 @@ use std::time::Duration;
 use kcp::Kcp;
 use skcp::KcpOutput;
 
-/// Kcp NoDelay Config
+/// Kcp Delay Config
 #[derive(Debug, Clone, Copy)]
 pub struct KcpNoDelayConfig {
     /// Enable nodelay

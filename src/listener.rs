@@ -1,5 +1,5 @@
 use std::io;
-use std::net::SocketAddr;
+use std::net::{self, SocketAddr};
 use std::rc::Rc;
 
 use futures::{Async, Poll, Stream};
@@ -37,12 +37,8 @@ impl Stream for Incoming {
 }
 
 impl KcpListener {
-    /// Creates a new `KcpListener` which will be bound to the specific address.
-    ///
-    /// The returned listener is ready for accepting connections.
-    pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
-        let updater = KcpServerSessionUpdater::new(handle)?;
-        UdpSocket::bind(addr, handle).map(|udp| {
+    fn from_udp_with_config(udp: UdpSocket, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
+        KcpServerSessionUpdater::new(handle).map(|updater| {
             let shared_udp = Rc::new(udp);
             let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
 
@@ -56,12 +52,36 @@ impl KcpListener {
             }
         })
     }
+    /// Creates a new `KcpListener` which will be bound to the specific address.
+    ///
+    /// The returned listener is ready for accepting connections.
+    pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
+        UdpSocket::bind(addr, handle).and_then(|udp| Self::from_udp_with_config(udp, handle, config))
+    }
 
     /// Creates a new `KcpListener` which will be bound to the specific address with default config.
     ///
     /// The returned listener is ready for accepting connections.
     pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
         KcpListener::bind_with_config(addr, handle, KcpConfig::default())
+    }
+
+    /// Creates a new `KcpListener` from prepared std::net::UdpSocket with default config.
+    ///
+    /// The returned listener is ready for accepting connections.
+    pub fn from_std_udp(udp: net::UdpSocket, handle: &Handle) -> io::Result<KcpListener> {
+        UdpSocket::from_socket(udp, handle)
+            .and_then(|udp| Self::from_udp_with_config(udp, handle, KcpConfig::default()))
+    }
+
+    /// Creates a new `KcpListener` from prepared std::net::UdpSocket.
+    ///
+    /// The returned listener is ready for accepting connections.
+    pub fn from_std_udp_with_config(udp: net::UdpSocket,
+                                    handle: &Handle,
+                                    config: KcpConfig)
+                                    -> io::Result<KcpListener> {
+        UdpSocket::from_socket(udp, handle).and_then(|udp| Self::from_udp_with_config(udp, handle, config))
     }
 
     /// Returns the local socket address of this listener.

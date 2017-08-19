@@ -208,7 +208,7 @@ fn main() {
 
     let count = env::args()
         .nth(3)
-        .unwrap_or("1".to_owned())
+        .unwrap_or_else(|| "1".to_owned())
         .parse::<usize>()
         .unwrap();
 
@@ -234,7 +234,7 @@ fn main() {
                 // r_fut.join(w_fut)
                 r_fut.select2(w_fut).then(|r| match r {
                                               Ok(..) => Ok(()),
-                                              Err(Either::A((err, ..))) => Err(err),
+                                              Err(Either::A((err, ..))) |
                                               Err(Either::B((err, ..))) => Err(err),
                                           })
             });

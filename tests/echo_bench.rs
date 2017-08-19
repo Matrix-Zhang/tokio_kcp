@@ -218,7 +218,7 @@ fn echo_bench(mode: TestMode) {
             // r_fut.join(w_fut)
             r_fut.select2(w_fut).then(|r| match r {
                                           Ok(..) => Ok(()),
-                                          Err(Either::A((err, ..))) => Err(err),
+                                          Err(Either::A((err, ..))) |
                                           Err(Either::B((err, ..))) => Err(err),
                                       })
         })

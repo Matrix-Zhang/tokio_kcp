@@ -5,6 +5,7 @@ extern crate bytes;
 extern crate futures;
 extern crate kcp;
 extern crate mio;
+extern crate net2;
 #[macro_use]
 extern crate tokio_core;
 extern crate tokio_io;

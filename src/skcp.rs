@@ -305,8 +305,8 @@ impl SharedKcp {
                                             recv_buf: Vec::new(), // Do not initialize it yet.
                                             expired: false,
                                             sent_first: false,
-                                            flush_write: true,
-                                            flush_ack_input: true,
+                                            flush_write: c.flush_write,
+                                            flush_ack_input: c.flush_acks_input,
                                         })),
         }
     }

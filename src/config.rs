@@ -81,7 +81,7 @@ impl Default for KcpConfig {
             fast_resend: None,
             flush_write: true,
             flush_acks_input: true,
-            stream: false,
+            stream: true,
         }
     }
 }

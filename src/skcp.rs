@@ -339,7 +339,7 @@ impl SharedKcp {
             return Err(From::from(io::Error::new(ErrorKind::WouldBlock, "too many pending packets")));
         }
 
-        if !inner.sent_first {
+        if !inner.sent_first && inner.kcp.waiting_conv() {
             assert!(buf.len() <= inner.kcp.mss() as usize, "First packet must be smaller than mss");
         }
 

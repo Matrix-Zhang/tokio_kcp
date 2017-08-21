@@ -132,3 +132,9 @@ impl KcpListener {
         Incoming { inner: self }
     }
 }
+
+impl Drop for KcpListener {
+    fn drop(&mut self) {
+        self.sessions.stop();
+    }
+}

@@ -22,22 +22,14 @@ use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
 use tokio_kcp::{KcpClientSessionUpdater, KcpStream};
 
+fn log_time(record: &LogRecord) -> String {
+    format!("[{}][{}] {}", time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(), record.level(), record.args())
+}
+
 fn main() {
     let mut log_builder = LogBuilder::new();
     // Default filter
-    log_builder.format(|record: &LogRecord| {
-        let now = time::now();
-        format!("[{}-{:02}-{:02}][{:02}:{:02}:{:02}.{}][{}] {}",
-                1900 + now.tm_year,
-                now.tm_mon + 1,
-                now.tm_mday,
-                now.tm_hour,
-                now.tm_min,
-                now.tm_sec,
-                now.tm_nsec / 100_000,
-                record.level(),
-                record.args())
-    });
+    log_builder.format(log_time);
     if let Ok(env_conf) = env::var("RUST_LOG") {
         log_builder.parse(&env_conf);
     }

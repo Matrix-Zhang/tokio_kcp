@@ -122,9 +122,9 @@ where
         };
 
         let run_it = u.clone();
-        handle.spawn(run_it.for_each(|_| Ok(())).map_err(|err| {
-                                                             error!("Session update failed! Err: {:?}", err);
-                                                         }));
+        handle.spawn(run_it.map_err(|err| {
+                                        error!("Session update failed! Err: {:?}", err);
+                                    }));
 
         Ok(u)
     }
@@ -198,77 +198,89 @@ where
     }
 }
 
-impl<S> Stream for KcpSessionUpdater<S>
+impl<S> Future for KcpSessionUpdater<S>
 where
     S: Session,
 {
     type Item = ();
     type Error = io::Error;
-    fn poll(&mut self) -> Poll<Option<()>, io::Error> {
+    fn poll(&mut self) -> Poll<(), io::Error> {
         let mut inner = self.inner.borrow_mut();
-        if inner.is_stop {
-            return Ok(Async::Ready(None));
-        }
-
-        try_ready!(inner.timeout.poll());
-
-        let mut finished = Vec::new();
-        let mut newly_push = Vec::new();
-        while let Some((conv, InstantOrd(inst))) = inner.conv_queue.peek().map(|(c, i)| (*c, *i)) {
-            let now = Instant::now();
-            if inst > now {
-                break;
+        for li in 1.. {
+            if inner.is_stop {
+                return Ok(Async::Ready(()));
             }
 
-            let _ = inner.conv_queue.pop();
+            if li > 3 {
+                // Yield the current task if it has already been looping over 3 times
+                // Or the other tasks will stave!
+                let task = task::current();
+                task.notify();
+                trace!("[SESS] Updater loops over 3 times, force yield");
+                return Ok(Async::NotReady);
+            }
 
-            let sess = inner.sessions
-                            .get_mut(&conv)
-                            .expect("Impossible! Cannot find session by conv!");
-            match sess.poll() {
-                Ok(Async::NotReady) => {
-                    unreachable!();
+            try_ready!(inner.timeout.poll());
+
+            let mut finished = Vec::new();
+            let mut newly_push = Vec::new();
+            while let Some((conv, InstantOrd(inst))) = inner.conv_queue.peek().map(|(c, i)| (*c, *i)) {
+                let now = Instant::now();
+                if inst > now {
+                    break;
                 }
-                Ok(Async::Ready(Some(next))) => {
-                    newly_push.push((conv, InstantOrd(next)));
+
+                let _ = inner.conv_queue.pop();
+
+                let sess = inner.sessions
+                                .get_mut(&conv)
+                                .expect("Impossible! Cannot find session by conv!");
+                match sess.poll() {
+                    Ok(Async::NotReady) => {
+                        unreachable!();
+                    }
+                    Ok(Async::Ready(Some(next))) => {
+                        newly_push.push((conv, InstantOrd(next)));
+                    }
+                    Ok(Async::Ready(None)) => {
+                        finished.push(conv);
+                    }
+                    Err(err) => {
+                        error!("[SESS] Update conv={} err: {:?}", conv, err);
+                        finished.push(conv);
+                    }
                 }
-                Ok(Async::Ready(None)) => {
-                    finished.push(conv);
+            }
+
+            for conv in finished {
+                if let Some(sess) = inner.sessions.remove(&conv) {
+                    let addr = sess.addr();
+                    let mut should_remove = false;
+                    if let Some(x) = inner.known_endpoint.get_mut(&addr) {
+                        x.remove(&conv);
+
+                        should_remove = x.is_empty();
+                    }
+
+                    if should_remove {
+                        inner.known_endpoint.remove(&addr);
+                    }
                 }
-                Err(err) => {
-                    error!("[SESS] Update conv={} err: {:?}", conv, err);
-                    finished.push(conv);
-                }
+            }
+
+            for (conv, inst) in newly_push {
+                inner.conv_queue.push(conv, inst);
+            }
+
+            if let Some((_, &InstantOrd(inst))) = inner.conv_queue.peek() {
+                inner.timeout.reset(inst);
+            } else {
+                inner.task = Some(task::current());
+                return Ok(Async::NotReady);
             }
         }
 
-        for conv in finished {
-            if let Some(sess) = inner.sessions.remove(&conv) {
-                let addr = sess.addr();
-                let mut should_remove = false;
-                if let Some(x) = inner.known_endpoint.get_mut(&addr) {
-                    x.remove(&conv);
-
-                    should_remove = x.is_empty();
-                }
-
-                if should_remove {
-                    inner.known_endpoint.remove(&addr);
-                }
-            }
-        }
-
-        for (conv, inst) in newly_push {
-            inner.conv_queue.push(conv, inst);
-        }
-
-        if let Some((_, &InstantOrd(inst))) = inner.conv_queue.peek() {
-            inner.timeout.reset(inst);
-            Ok(Async::Ready(Some(())))
-        } else {
-            inner.task = Some(task::current());
-            Ok(Async::NotReady)
-        }
+        unreachable!()
     }
 }
 

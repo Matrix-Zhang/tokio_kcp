@@ -327,6 +327,10 @@ impl SharedKcp {
     pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
 
+        if inner.expired {
+            return Ok(0);
+        }
+
         // If:
         //     1. Have sent the first packet (asking for conv)
         //     2. Too many pending packets
@@ -397,6 +401,11 @@ impl SharedKcp {
     pub fn set_expired(&mut self) -> KcpResult<()> {
         let mut inner = self.inner.borrow_mut();
         inner.expired = true;
+
+        if let Some(task) = inner.send_task.take() {
+            task.notify();
+        }
+
         inner.kcp.flush()
     }
 

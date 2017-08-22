@@ -15,12 +15,13 @@ use std::thread;
 use bytes::{BufMut, BytesMut};
 use env_logger::LogBuilder;
 use futures::{Future, Sink, Stream};
+use futures::future::Either;
 use futures::sync::mpsc;
 use log::LogRecord;
 use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
-use tokio_kcp::{KcpClientSessionUpdater, KcpStream};
+use tokio_kcp::{KcpSessionManager, KcpStream};
 
 fn log_time(record: &LogRecord) -> String {
     format!("[{}][{}] {}", time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(), record.level(), record.args())
@@ -48,18 +49,18 @@ fn main() {
     let stdin_rx = stdin_rx.map_err(|err| panic!("RX err: {:?}", err));
     let mut stdout = io::stdout();
 
-    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+    let mut updater = KcpSessionManager::new(&handle).unwrap();
 
     let client = futures::lazy(|| KcpStream::connect(0, &addr, &handle, &mut updater)).and_then(|stream| {
         let (sink, stream) = stream.framed(Bytes).split();
         let send_stdin = stdin_rx.forward(sink);
         let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));
 
-        send_stdin.map(|_| ())
-                  .join(write_stdout.map(|_| ()))
-                  .map_err(|err| {
-                               panic!("Failed to handle stream, err: {:?}", err);
-                           })
+        send_stdin.select2(write_stdout).then(|r| match r {
+                                                  Ok(..) => Ok(()),
+                                                  Err(Either::A((err, ..))) => Err(err),
+                                                  Err(Either::B((err, ..))) => Err(err),
+                                              })
     });
 
     core.run(client).unwrap();

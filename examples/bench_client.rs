@@ -22,7 +22,7 @@ use futures::future::Either;
 use time::Timespec;
 use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_io::AsyncRead;
-use tokio_kcp::{KcpClientSessionUpdater, KcpConfig, KcpNoDelayConfig, KcpStream};
+use tokio_kcp::{KcpConfig, KcpNoDelayConfig, KcpSessionManager, KcpStream};
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {
@@ -219,7 +219,7 @@ fn main() {
     let mut fut: Option<Box<Future<Item = (), Error = io::Error>>> = None;
 
     let handle = core.handle();
-    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+    let mut updater = KcpSessionManager::new(&handle).unwrap();
 
     for i in 0..count {
         let handle = core.handle();

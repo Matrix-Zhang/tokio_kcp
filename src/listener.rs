@@ -8,14 +8,14 @@ use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
 
 use config::KcpConfig;
-use session::KcpServerSessionUpdater;
+use session::KcpSessionManager;
 use skcp::KcpOutputHandle;
 use stream::ServerKcpStream;
 
 /// A KCP Socket server
 pub struct KcpListener {
     udp: Rc<UdpSocket>,
-    sessions: KcpServerSessionUpdater,
+    sessions: KcpSessionManager,
     handle: Handle,
     config: KcpConfig,
     buf: Vec<u8>,
@@ -38,7 +38,7 @@ impl Stream for Incoming {
 
 impl KcpListener {
     fn from_udp_with_config(udp: UdpSocket, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
-        KcpServerSessionUpdater::new(handle).map(|updater| {
+        KcpSessionManager::new(handle).map(|updater| {
             let shared_udp = Rc::new(udp);
             let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
 

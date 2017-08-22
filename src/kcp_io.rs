@@ -1,15 +1,12 @@
-use std::cell::RefCell;
 use std::cmp;
 use std::io::{self, BufRead, Read, Write};
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::Duration;
 
 use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 
-use session::{KcpClientSession, KcpClientSessionUpdater, KcpServerSession, KcpServerSessionUpdater, KcpSession,
-              KcpSessionMode};
+use session::{KcpSession, KcpSessionManager, KcpSessionOperation};
 use skcp::SharedKcp;
 
 /// Base Io object for KCP
@@ -146,77 +143,28 @@ impl Drop for KcpIo {
     }
 }
 
-/// Io object for client
-///
-/// It doesn't need to have evented to be implemented
-pub struct ClientKcpIo {
-    io: KcpIo,
-}
-
-impl ClientKcpIo {
-    pub fn new(kcp: SharedKcp,
-               addr: SocketAddr,
-               expire_dur: Duration,
-               u: &mut KcpClientSessionUpdater)
-               -> io::Result<ClientKcpIo> {
-        let mut sess = KcpSession::new(kcp.clone(), addr, expire_dur, KcpSessionMode::Client)?;
-        sess.update()?; // Call update once it is created
-        let sess = Rc::new(RefCell::new(sess));
-        let sess = KcpClientSession::new(sess);
-
-        u.insert_by_conv(kcp.conv(), sess);
-
-        trace!("[CLIENT] Created stream bind addr={} conv={}", addr, kcp.conv());
-        Ok(ClientKcpIo { io: KcpIo::new(kcp) })
-    }
-
-    pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.io.input(buf)
-    }
-
-    pub fn mtu(&self) -> usize {
-        self.io.mtu()
-    }
-}
-
-impl Read for ClientKcpIo {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.io.read(buf)
-    }
-}
-
-impl Write for ClientKcpIo {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.io.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.io.flush()
-    }
-}
-
-/// Io object for server
+/// Io object evented
 ///
 /// It implements `Evented` apis
-pub struct ServerKcpIo {
+pub struct EventedKcpIo {
     io: KcpIo,
     reg: Registration,
     readiness: SetReadiness,
 }
 
-impl ServerKcpIo {
+impl EventedKcpIo {
     pub fn new(kcp: SharedKcp,
                addr: SocketAddr,
                expire_dur: Duration,
-               u: &mut KcpServerSessionUpdater)
-               -> io::Result<ServerKcpIo> {
-        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, KcpSessionMode::Server)?;
+               u: &mut KcpSessionManager)
+               -> io::Result<EventedKcpIo> {
+        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur)?;
         let (reg, r) = Registration::new2();
-        let sess = KcpServerSession::new(sess, r.clone());
+        let sess = KcpSessionOperation::new(sess, r.clone());
 
         u.insert_by_conv(kcp.conv(), sess);
 
-        Ok(ServerKcpIo {
+        Ok(EventedKcpIo {
                io: KcpIo::new(kcp),
                reg: reg,
                readiness: r,
@@ -236,9 +184,14 @@ impl ServerKcpIo {
     pub fn shutdown(&mut self) -> io::Result<()> {
         self.io.shutdown()
     }
+
+    /// Get MTU
+    pub fn mtu(&self) -> usize {
+        self.io.mtu()
+    }
 }
 
-impl Evented for ServerKcpIo {
+impl Evented for EventedKcpIo {
     fn register(&self, poll: &mio::Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
         self.reg.register(poll, token, interest, opts)
     }
@@ -252,13 +205,13 @@ impl Evented for ServerKcpIo {
     }
 }
 
-impl Read for ServerKcpIo {
+impl Read for EventedKcpIo {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.io.read(buf)
     }
 }
 
-impl Write for ServerKcpIo {
+impl Write for EventedKcpIo {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.io.write(buf)
     }

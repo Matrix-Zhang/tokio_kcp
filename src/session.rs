@@ -67,10 +67,8 @@ where
     }
 }
 
-/// Session updater for server accepted streams
-pub type KcpServerSessionUpdater = KcpSessionUpdater<KcpServerSession>;
-/// Session updater for clients
-pub type KcpClientSessionUpdater = KcpSessionUpdater<KcpClientSession>;
+/// Managing sessions
+pub type KcpSessionManager = KcpSessionUpdater<KcpSessionOperation>;
 
 /// KCP session updater
 ///
@@ -287,39 +285,26 @@ where
 /// Shared session for controlling from other objects
 pub type SharedKcpSession = Rc<RefCell<KcpSession>>;
 
-/// KCP session mode
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub enum KcpSessionMode {
-    Client,
-    Server,
-}
-
 /// Session of a KCP conversation
 pub struct KcpSession {
     kcp: SharedKcp,
     addr: SocketAddr,
     expire_dur: Duration,
-    mode: KcpSessionMode,
 }
 
 impl KcpSession {
-    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration, mode: KcpSessionMode) -> io::Result<KcpSession> {
+    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration) -> io::Result<KcpSession> {
         let mut n = KcpSession {
             kcp: kcp,
             addr: addr,
             expire_dur: expire_dur,
-            mode: mode,
         };
         n.update()?;
         Ok(n)
     }
 
-    pub fn new_shared(kcp: SharedKcp,
-                      addr: SocketAddr,
-                      expire_dur: Duration,
-                      mode: KcpSessionMode)
-                      -> io::Result<SharedKcpSession> {
-        let sess = KcpSession::new(kcp, addr, expire_dur, mode)?;
+    pub fn new_shared(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration) -> io::Result<SharedKcpSession> {
+        let sess = KcpSession::new(kcp, addr, expire_dur)?;
         Ok(Rc::new(RefCell::new(sess)))
     }
 
@@ -377,12 +362,10 @@ impl KcpSession {
 
         // Check if it is closed
         if self.is_closed() {
-            if self.mode == KcpSessionMode::Client {
-                // Take over the UDP's control
-                // Because in client mode, when the Stream is closed, session is the only one to be responsible
-                // for receving data from udp and input to kcp.
-                let _ = self.kcp.fetch();
-            }
+            // Take over the UDP's control
+            // When the Stream is closed, session is the only one to be responsible
+            // for receving data from udp and input to kcp.
+            let _ = self.kcp.fetch();
 
             if self.can_close() {
                 trace!("[SESS] addr={} conv={} closing", self.addr, self.kcp.conv());
@@ -399,26 +382,23 @@ impl KcpSession {
     }
 }
 
-/// Server accepted session
-///
-/// This session is updated by the accept function. So it requires to notify readable events when it has
-/// data to read.
+/// Operation handle of a KCP session
 #[derive(Clone)]
-pub struct KcpServerSession {
+pub struct KcpSessionOperation {
     session: SharedKcpSession,
     readiness: SetReadiness,
 }
 
-impl KcpServerSession {
-    pub fn new(sess: SharedKcpSession, r: SetReadiness) -> KcpServerSession {
-        KcpServerSession {
+impl KcpSessionOperation {
+    pub fn new(sess: SharedKcpSession, r: SetReadiness) -> KcpSessionOperation {
+        KcpSessionOperation {
             session: sess,
             readiness: r,
         }
     }
 }
 
-impl Stream for KcpServerSession {
+impl Stream for KcpSessionOperation {
     type Item = Instant;
     type Error = io::Error;
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -446,7 +426,7 @@ impl Stream for KcpServerSession {
     }
 }
 
-impl Session for KcpServerSession {
+impl Session for KcpSessionOperation {
     /// Calls when you got data from transmission
     fn input(&mut self, buf: &[u8]) -> io::Result<()> {
         let mut sess = self.session.borrow_mut();
@@ -467,44 +447,9 @@ impl Session for KcpServerSession {
     }
 }
 
-impl Debug for KcpServerSession {
+impl Debug for KcpSessionOperation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let sess = self.session.borrow();
-        write!(f, "KcpServerSession({})", sess.addr())
-    }
-}
-
-/// Client session
-///
-/// This session is not requires to notify any events, because all of them is done on the caller side.
-#[derive(Clone)]
-pub struct KcpClientSession {
-    session: SharedKcpSession,
-}
-
-impl KcpClientSession {
-    pub fn new(sess: SharedKcpSession) -> KcpClientSession {
-        KcpClientSession { session: sess }
-    }
-}
-
-impl Stream for KcpClientSession {
-    type Item = Instant;
-    type Error = io::Error;
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        let mut sess = self.session.borrow_mut();
-        sess.poll()
-    }
-}
-
-impl Session for KcpClientSession {
-    fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        let mut sess = self.session.borrow_mut();
-        sess.input(buf)
-    }
-
-    fn addr(&self) -> SocketAddr {
-        let sess = self.session.borrow();
-        *sess.addr()
+        write!(f, "KcpSessionOperation({})", sess.addr())
     }
 }

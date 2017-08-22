@@ -15,7 +15,7 @@ use tokio_core::reactor::Core;
 use tokio_io::AsyncRead;
 use tokio_io::io::copy;
 
-use tokio_kcp::{KcpClientSessionUpdater, KcpListener, KcpStream};
+use tokio_kcp::{KcpListener, KcpSessionManager, KcpStream};
 
 const TEST_PAYLOAD: &'static [u8] = b"HellO\x01WoRlD";
 
@@ -116,7 +116,7 @@ fn echo() {
                                  panic!("Failed to run server: {:?}", err);
                              }));
 
-    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+    let mut updater = KcpSessionManager::new(&handle).unwrap();
 
     let cli = futures::lazy(|| KcpStream::connect(0, &addr, &handle, &mut updater)).and_then(|s| {
         let (r, w) = s.split();

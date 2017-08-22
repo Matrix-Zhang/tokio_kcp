@@ -22,7 +22,7 @@ use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_io::AsyncRead;
 use tokio_io::io::copy;
 
-use tokio_kcp::{KcpClientSessionUpdater, KcpConfig, KcpListener, KcpNoDelayConfig, KcpStream};
+use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig, KcpSessionManager, KcpStream};
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {
@@ -206,7 +206,7 @@ fn echo_bench(mode: TestMode) {
                                  panic!("Failed to run server: {:?}", err);
                              }));
 
-    let mut updater = KcpClientSessionUpdater::new(&handle).unwrap();
+    let mut updater = KcpSessionManager::new(&handle).unwrap();
 
     let chandle = core.handle();
     let mut cupdater = updater.clone();

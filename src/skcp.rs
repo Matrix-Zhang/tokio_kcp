@@ -250,8 +250,8 @@ impl KcpCell {
             self.recv_buf.resize(mtu, 0);
         }
 
-        let n = match self.udp.recv_from(&mut self.recv_buf) {
-            Ok((n, _)) => n,
+        let (n, addr) = match self.udp.recv_from(&mut self.recv_buf) {
+            Ok((n, addr)) => (n, addr),
             Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
                 return Ok(());
             }
@@ -259,7 +259,7 @@ impl KcpCell {
         };
 
         // Ah, we got something
-        trace!("[RECV] Fetch. SharedKcp recv size={} {:?}", n, ::debug::BsDebug(&self.recv_buf[..n]));
+        trace!("[RECV] Fetch. SharedKcp recv size={}, addr={} {:?}", n, addr, ::debug::BsDebug(&self.recv_buf[..n]));
         self.input_self(n)
     }
 }

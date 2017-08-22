@@ -6,7 +6,7 @@ use std::time::Duration;
 use kcp::Error as KcpError;
 use mio::{self, Evented, PollOpt, Ready, Registration, SetReadiness, Token};
 
-use session::{KcpSession, KcpSessionManager, KcpSessionOperation};
+use session::{KcpSession, KcpSessionManager, KcpSessionMode, KcpSessionOperation};
 use skcp::SharedKcp;
 
 /// Base Io object for KCP
@@ -156,9 +156,10 @@ impl EventedKcpIo {
     pub fn new(kcp: SharedKcp,
                addr: SocketAddr,
                expire_dur: Duration,
-               u: &mut KcpSessionManager)
+               u: &mut KcpSessionManager,
+               mode: KcpSessionMode)
                -> io::Result<EventedKcpIo> {
-        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur)?;
+        let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, mode)?;
         let (reg, r) = Registration::new2();
         let sess = KcpSessionOperation::new(sess, r.clone());
 

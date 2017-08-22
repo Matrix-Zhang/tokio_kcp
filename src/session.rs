@@ -165,8 +165,11 @@ where
         }
 
         if let Some(task) = inner.task.take() {
+            trace!("[Sess] Updater awake");
             task.notify();
         }
+
+        trace!("[SESS] Inserted session conv={}", conv);
     }
 
     /// Get one unused `conv`
@@ -273,6 +276,7 @@ where
             if let Some((_, &InstantOrd(inst))) = inner.conv_queue.peek() {
                 inner.timeout.reset(inst);
             } else {
+                trace!("[SESS] Updater yield");
                 inner.task = Some(task::current());
                 return Ok(Async::NotReady);
             }
@@ -285,26 +289,39 @@ where
 /// Shared session for controlling from other objects
 pub type SharedKcpSession = Rc<RefCell<KcpSession>>;
 
+/// Session running mode
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum KcpSessionMode {
+    Client,
+    Server,
+}
+
 /// Session of a KCP conversation
 pub struct KcpSession {
     kcp: SharedKcp,
     addr: SocketAddr,
     expire_dur: Duration,
+    mode: KcpSessionMode,
 }
 
 impl KcpSession {
-    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration) -> io::Result<KcpSession> {
+    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration, mode: KcpSessionMode) -> io::Result<KcpSession> {
         let mut n = KcpSession {
             kcp: kcp,
             addr: addr,
             expire_dur: expire_dur,
+            mode: mode,
         };
         n.update()?;
         Ok(n)
     }
 
-    pub fn new_shared(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration) -> io::Result<SharedKcpSession> {
-        let sess = KcpSession::new(kcp, addr, expire_dur)?;
+    pub fn new_shared(kcp: SharedKcp,
+                      addr: SocketAddr,
+                      expire_dur: Duration,
+                      mode: KcpSessionMode)
+                      -> io::Result<SharedKcpSession> {
+        let sess = KcpSession::new(kcp, addr, expire_dur, mode)?;
         Ok(Rc::new(RefCell::new(sess)))
     }
 
@@ -362,10 +379,12 @@ impl KcpSession {
 
         // Check if it is closed
         if self.is_closed() {
-            // Take over the UDP's control
-            // When the Stream is closed, session is the only one to be responsible
-            // for receving data from udp and input to kcp.
-            let _ = self.kcp.fetch();
+            if let KcpSessionMode::Client = self.mode {
+                // Take over the UDP's control
+                // When the Stream is closed, session is the only one to be responsible
+                // for receving data from udp and input to kcp.
+                let _ = self.kcp.fetch();
+            }
 
             if self.can_close() {
                 trace!("[SESS] addr={} conv={} closing", self.addr, self.kcp.conv());

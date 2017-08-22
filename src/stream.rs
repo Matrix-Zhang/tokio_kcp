@@ -11,7 +11,7 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use config::KcpConfig;
 use kcp::get_conv;
 use kcp_io::EventedKcpIo;
-use session::KcpSessionManager;
+use session::{KcpSessionManager, KcpSessionMode};
 use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
 
 /// Default session expired timeout
@@ -65,7 +65,7 @@ impl KcpStream {
         };
 
         let local_addr = udp.local_addr().expect("Failed to get local addr");
-        let io = EventedKcpIo::new(kcp, local_addr, sess_exp, u)?;
+        let io = EventedKcpIo::new(kcp, local_addr, sess_exp, u, KcpSessionMode::Client)?;
         let io = PollEvented::new(io, handle)?;
         Ok(KcpStream::new(udp, io))
     }
@@ -174,7 +174,7 @@ impl ServerKcpStream {
             None => Duration::from_secs(SESSION_EXPIRED_SECONDS),
         };
 
-        let io = EventedKcpIo::new(kcp, *addr, sess_exp, u)?;
+        let io = EventedKcpIo::new(kcp, *addr, sess_exp, u, KcpSessionMode::Server)?;
         let io = PollEvented::new(io, handle)?;
         Ok(ServerKcpStream { io: io })
 

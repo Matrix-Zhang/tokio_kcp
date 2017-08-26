@@ -328,7 +328,8 @@ impl SharedKcp {
         let mut inner = self.inner.borrow_mut();
 
         if inner.expired {
-            return Ok(0);
+            let err = io::Error::new(ErrorKind::BrokenPipe, "session expired");
+            return Err(From::from(err));
         }
 
         // If:
@@ -373,8 +374,9 @@ impl SharedKcp {
     pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         let mut inner = self.inner.borrow_mut();
         if inner.expired {
-            // If it is already expired, return EOF
-            return Ok(0);
+            // If it is already expired, return error
+            let err = io::Error::new(ErrorKind::BrokenPipe, "session expired");
+            return Err(From::from(err));
         }
 
         let n = inner.kcp.recv(buf)?;

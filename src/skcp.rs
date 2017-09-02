@@ -85,6 +85,7 @@ impl KcpOutputInner {
 
 impl Drop for KcpOutputInner {
     fn drop(&mut self) {
+        trace!("[SEND] KcpOutputInner dropping, ensuring the queue is finished? {}", self.is_finished);
         self.close();
     }
 }
@@ -114,6 +115,7 @@ impl Future for KcpOutputQueue {
         }
 
         if inner.is_finished {
+            trace!("[SEND] Delayed UDP queue closing, local addr={}", inner.udp.local_addr().unwrap());
             Ok(Async::Ready(()))
         } else {
             inner.task = Some(task::current());
@@ -147,11 +149,31 @@ impl KcpOutputHandle {
         let inner = self.inner.borrow();
         inner.udp.clone()
     }
+
+    fn close(&mut self) {
+        let inner_ref_count = Rc::strong_count(&self.inner);
+        trace!("[KCP] KcpOutputHandle.inner has ref={}", inner_ref_count);
+
+        // Well, if ref count is 2, that means we are already the last instance of `KcpOutputHandle`.
+        // `KcpOutputQueue` holds the other ref of `KcpOutputInner`.
+        if inner_ref_count == 2 {
+            trace!("[KCP] KcpOutputHandle is closing the delay queue");
+            let mut inner = self.inner.borrow_mut();
+            inner.close();
+        }
+    }
 }
 
 pub struct KcpOutput {
     inner: KcpOutputHandle,
     peer: SocketAddr,
+}
+
+impl Drop for KcpOutput {
+    fn drop(&mut self) {
+        trace!("[KCP] KcpOutput is closing, try to close delay queue");
+        self.inner.close();
+    }
 }
 
 impl KcpOutput {
@@ -196,6 +218,7 @@ struct KcpCell {
 
 impl Drop for KcpCell {
     fn drop(&mut self) {
+        trace!("[KCP] KcpCell is dropping, flushing pending packets");
         let _ = self.kcp.flush();
     }
 }

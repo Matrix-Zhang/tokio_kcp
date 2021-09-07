@@ -1,8 +1,8 @@
 extern crate tokio_kcp;
 #[macro_use]
 extern crate tokio_core;
-extern crate tokio_io;
 extern crate env_logger;
+extern crate tokio_io;
 #[macro_use]
 extern crate futures;
 extern crate bytes;
@@ -15,12 +15,12 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::{Buf, BufMut, BytesMut, LittleEndian};
-use futures::{Async, Future, Poll, Stream};
 use futures::future::Either;
+use futures::{Async, Future, Poll, Stream};
 use time::Timespec;
 use tokio_core::reactor::{Core, Handle, Interval};
-use tokio_io::AsyncRead;
 use tokio_io::io::copy;
+use tokio_io::AsyncRead;
 
 use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig, KcpSessionManager, KcpStream};
 
@@ -55,7 +55,8 @@ impl<W: Write> LoopSender<W> {
         LoopSender {
             w: Some(w),
             count: count,
-            intv: Interval::new(Duration::from_millis(20), handle).expect("Failed to create interval"),
+            intv: Interval::new(Duration::from_millis(20), handle)
+                .expect("Failed to create interval"),
             index: 0,
         }
     }
@@ -114,8 +115,16 @@ impl<R: Read> LoopReader<R> {
 
 impl<R: Read> Drop for LoopReader<R> {
     fn drop(&mut self) {
-        println!("{:?} mode result ({}ms)", self.mode, current() - self.start_ts);
-        println!("avgrtt={} maxrtt={}", self.sum_rtt / self.count, self.max_rtt);
+        println!(
+            "{:?} mode result ({}ms)",
+            self.mode,
+            current() - self.start_ts
+        );
+        println!(
+            "avgrtt={} maxrtt={}",
+            self.sum_rtt / self.count,
+            self.max_rtt
+        );
     }
 }
 
@@ -163,27 +172,27 @@ fn echo_bench(mode: TestMode) {
     match mode {
         TestMode::Default => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: false,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: false,
+            });
         }
         TestMode::Normal => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: true,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: true,
+            });
         }
         TestMode::Fast => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: true,
-                                      interval: 10,
-                                      resend: 2,
-                                      nc: true,
-                                  });
+                nodelay: true,
+                interval: 10,
+                resend: 2,
+                nc: true,
+            });
 
             config.rx_minrto = Some(10);
             config.fast_resend = Some(1);
@@ -195,37 +204,38 @@ fn echo_bench(mode: TestMode) {
     let addr = listener.local_addr().unwrap();
 
     let svr = listener.incoming().for_each(move |(s, _)| {
-                                               let (r, w) = s.split();
-                                               let fut = copy(r, w);
-                                               handle.spawn(fut.map(|_| ()).map_err(|_| ()));
-                                               Ok(())
-                                           });
+        let (r, w) = s.split();
+        let fut = copy(r, w);
+        handle.spawn(fut.map(|_| ()).map_err(|_| ()));
+        Ok(())
+    });
 
     let handle = core.handle();
     handle.spawn(svr.map_err(|err| {
-                                 panic!("Failed to run server: {:?}", err);
-                             }));
+        panic!("Failed to run server: {:?}", err);
+    }));
 
     let mut updater = KcpSessionManager::new(&handle).unwrap();
 
     let chandle = core.handle();
     let mut cupdater = updater.clone();
-    let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &mut cupdater, &config))
-        .and_then(move |s| {
-            let (r, w) = s.split();
-            let w_fut = LoopSender::new(w, 1000, &chandle);
-            let r_fut = LoopReader::new(mode, r, 1000);
-            // r_fut.join(w_fut)
-            r_fut.select2(w_fut).then(|r| match r {
-                                          Ok(..) => Ok(()),
-                                          Err(Either::A((err, ..))) |
-                                          Err(Either::B((err, ..))) => Err(err),
-                                      })
+    let cli = futures::lazy(move || {
+        KcpStream::connect_with_config(0, &addr, &handle, &mut cupdater, &config)
+    })
+    .and_then(move |s| {
+        let (r, w) = s.split();
+        let w_fut = LoopSender::new(w, 1000, &chandle);
+        let r_fut = LoopReader::new(mode, r, 1000);
+        // r_fut.join(w_fut)
+        r_fut.select2(w_fut).then(|r| match r {
+            Ok(..) => Ok(()),
+            Err(Either::A((err, ..))) | Err(Either::B((err, ..))) => Err(err),
         })
-        .then(|r| {
-                  updater.stop();
-                  r
-              });
+    })
+    .then(|r| {
+        updater.stop();
+        r
+    });
 
     core.run(cli).unwrap();
 }

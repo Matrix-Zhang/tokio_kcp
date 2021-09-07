@@ -1,11 +1,11 @@
 extern crate bytes;
-extern crate futures;
-extern crate tokio_core;
-extern crate tokio_kcp;
-extern crate tokio_io;
 extern crate env_logger;
+extern crate futures;
 extern crate log;
 extern crate time;
+extern crate tokio_core;
+extern crate tokio_io;
+extern crate tokio_kcp;
 
 use std::env;
 use std::io::{self, Read, Write};
@@ -14,17 +14,22 @@ use std::thread;
 
 use bytes::{BufMut, BytesMut};
 use env_logger::LogBuilder;
-use futures::{Future, Sink, Stream};
 use futures::future::Either;
 use futures::sync::mpsc;
+use futures::{Future, Sink, Stream};
 use log::LogRecord;
 use tokio_core::reactor::Core;
-use tokio_io::AsyncRead;
 use tokio_io::codec::{Decoder, Encoder};
+use tokio_io::AsyncRead;
 use tokio_kcp::{KcpSessionManager, KcpStream};
 
 fn log_time(record: &LogRecord) -> String {
-    format!("[{}][{}] {}", time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(), record.level(), record.args())
+    format!(
+        "[{}][{}] {}",
+        time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(),
+        record.level(),
+        record.args()
+    )
 }
 
 fn main() {
@@ -51,21 +56,21 @@ fn main() {
 
     let mut updater = KcpSessionManager::new(&handle).unwrap();
 
-    let client = futures::lazy(|| KcpStream::connect(0, &addr, &handle, &mut updater)).and_then(|stream| {
-        let (sink, stream) = stream.framed(Bytes).split();
-        let send_stdin = stdin_rx.forward(sink);
-        let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));
+    let client =
+        futures::lazy(|| KcpStream::connect(0, &addr, &handle, &mut updater)).and_then(|stream| {
+            let (sink, stream) = stream.framed(Bytes).split();
+            let send_stdin = stdin_rx.forward(sink);
+            let write_stdout = stream.for_each(move |buf| stdout.write_all(&buf));
 
-        send_stdin.select2(write_stdout).then(|r| match r {
-                                                  Ok(..) => Ok(()),
-                                                  Err(Either::A((err, ..))) => Err(err),
-                                                  Err(Either::B((err, ..))) => Err(err),
-                                              })
-    });
+            send_stdin.select2(write_stdout).then(|r| match r {
+                Ok(..) => Ok(()),
+                Err(Either::A((err, ..))) => Err(err),
+                Err(Either::B((err, ..))) => Err(err),
+            })
+        });
 
     core.run(client).unwrap();
 }
-
 
 struct Bytes;
 

@@ -20,7 +20,7 @@ struct KcpIo {
 impl KcpIo {
     pub fn new(kcp: SharedKcp) -> KcpIo {
         KcpIo {
-            kcp: kcp,
+            kcp,
             read_buf: Vec::new(),
             read_pos: 0,
             read_cap: 0,
@@ -80,7 +80,11 @@ impl BufRead for KcpIo {
                 self.read_pos = 0;
                 self.read_cap = n;
 
-                trace!("[RECV] kcp.recv size={} {:?}", n, ::debug::BsDebug(&self.read_buf[..n]));
+                trace!(
+                    "[RECV] kcp.recv size={} {:?}",
+                    n,
+                    ::debug::BsDebug(&self.read_buf[..n])
+                );
 
                 break;
             }
@@ -104,9 +108,11 @@ impl Read for KcpIo {
                     return Ok(n);
                 }
                 Err(KcpError::UserBufTooSmall) => {
-                    trace!("[RECV] KcpIo.read directly peeksize={} buf size={} too small",
-                           self.kcp.peeksize(),
-                           buf.len());
+                    trace!(
+                        "[RECV] KcpIo.read directly peeksize={} buf size={} too small",
+                        self.kcp.peeksize(),
+                        buf.len()
+                    );
                 }
                 Err(err) => return Err(From::from(err)),
             }
@@ -124,7 +130,11 @@ impl Read for KcpIo {
 
 impl Write for KcpIo {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        trace!("[SEND] KcpIo.write size={} {:?}", buf.len(), ::debug::BsDebug(buf));
+        trace!(
+            "[SEND] KcpIo.write size={} {:?}",
+            buf.len(),
+            ::debug::BsDebug(buf)
+        );
         let n = self.kcp.send(buf)?;
         trace!("[SEND] kcp.send size={}", n);
         Ok(n)
@@ -153,12 +163,13 @@ pub struct EventedKcpIo {
 }
 
 impl EventedKcpIo {
-    pub fn new(kcp: SharedKcp,
-               addr: SocketAddr,
-               expire_dur: Duration,
-               u: &mut KcpSessionManager,
-               mode: KcpSessionMode)
-               -> io::Result<EventedKcpIo> {
+    pub fn new(
+        kcp: SharedKcp,
+        addr: SocketAddr,
+        expire_dur: Duration,
+        u: &mut KcpSessionManager,
+        mode: KcpSessionMode,
+    ) -> io::Result<EventedKcpIo> {
         let sess = KcpSession::new_shared(kcp.clone(), addr, expire_dur, mode)?;
         let (reg, r) = Registration::new2();
         let sess = KcpSessionOperation::new(sess, r.clone());
@@ -166,10 +177,10 @@ impl EventedKcpIo {
         u.insert_by_conv(kcp.conv(), sess);
 
         Ok(EventedKcpIo {
-               io: KcpIo::new(kcp),
-               reg: reg,
-               readiness: r,
-           })
+            io: KcpIo::new(kcp),
+            reg,
+            readiness: r,
+        })
     }
 
     /// Call everytime you got data from transmission
@@ -193,11 +204,23 @@ impl EventedKcpIo {
 }
 
 impl Evented for EventedKcpIo {
-    fn register(&self, poll: &mio::Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+    fn register(
+        &self,
+        poll: &mio::Poll,
+        token: Token,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<()> {
         self.reg.register(poll, token, interest, opts)
     }
 
-    fn reregister(&self, poll: &mio::Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+    fn reregister(
+        &self,
+        poll: &mio::Poll,
+        token: Token,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<()> {
         self.reg.reregister(poll, token, interest, opts)
     }
 

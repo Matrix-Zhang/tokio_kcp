@@ -1,10 +1,10 @@
-extern crate futures;
-extern crate tokio_core;
-extern crate tokio_kcp;
-extern crate tokio_io;
 extern crate env_logger;
+extern crate futures;
 extern crate log;
 extern crate time;
+extern crate tokio_core;
+extern crate tokio_io;
+extern crate tokio_kcp;
 
 use std::env;
 use std::net::SocketAddr;
@@ -14,8 +14,8 @@ use futures::future::Future;
 use futures::stream::Stream;
 use log::LogRecord;
 use tokio_core::reactor::Core;
-use tokio_io::AsyncRead;
 use tokio_io::io::copy;
+use tokio_io::AsyncRead;
 use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -31,27 +31,27 @@ fn get_config(mode: TestMode) -> KcpConfig {
     match mode {
         TestMode::Default => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: false,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: false,
+            });
         }
         TestMode::Normal => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: true,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: true,
+            });
         }
         TestMode::Fast => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: true,
-                                      interval: 10,
-                                      resend: 2,
-                                      nc: true,
-                                  });
+                nodelay: true,
+                interval: 10,
+                resend: 2,
+                nc: true,
+            });
 
             config.rx_minrto = Some(10);
             config.fast_resend = Some(1);
@@ -62,7 +62,12 @@ fn get_config(mode: TestMode) -> KcpConfig {
 }
 
 fn log_time(record: &LogRecord) -> String {
-    format!("[{}][{}] {}", time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(), record.level(), record.args())
+    format!(
+        "[{}][{}] {}",
+        time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(),
+        record.level(),
+        record.args()
+    )
 }
 
 fn main() {
@@ -98,12 +103,12 @@ fn main() {
         let (reader, writer) = stream.split();
         let amt = copy(reader, writer);
         let msg = amt.then(move |result| {
-                               match result {
-                                   Ok((amt, ..)) => println!("wrote {} bytes to {}", amt, addr),
-                                   Err(e) => println!("error on {}: {}", addr, e),
-                               }
-                               Ok(())
-                           });
+            match result {
+                Ok((amt, ..)) => println!("wrote {} bytes to {}", amt, addr),
+                Err(e) => println!("error on {}: {}", addr, e),
+            }
+            Ok(())
+        });
 
         handle.spawn(msg);
 

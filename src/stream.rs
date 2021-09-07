@@ -28,29 +28,31 @@ impl KcpStream {
     #[doc(hidden)]
     fn new(udp: Rc<UdpSocket>, io: PollEvented<EventedKcpIo>) -> KcpStream {
         let buf = vec![0u8; io.get_ref().mtu()];
-        KcpStream {
-            udp: udp,
-            io: io,
-            buf: buf,
-        }
+        KcpStream { udp, io, buf }
     }
 
     /// Opens a KCP connection to a remote host.
     ///
     /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
-    pub fn connect(conv: u32, addr: &SocketAddr, handle: &Handle, u: &mut KcpSessionManager) -> io::Result<KcpStream> {
+    pub fn connect(
+        conv: u32,
+        addr: &SocketAddr,
+        handle: &Handle,
+        u: &mut KcpSessionManager,
+    ) -> io::Result<KcpStream> {
         KcpStream::connect_with_config(conv, addr, handle, u, &KcpConfig::default())
     }
 
     /// Opens a KCP connection to a remote host.
     ///
     /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
-    pub fn connect_with_config(conv: u32,
-                               addr: &SocketAddr,
-                               handle: &Handle,
-                               u: &mut KcpSessionManager,
-                               config: &KcpConfig)
-                               -> io::Result<KcpStream> {
+    pub fn connect_with_config(
+        conv: u32,
+        addr: &SocketAddr,
+        handle: &Handle,
+        u: &mut KcpSessionManager,
+        config: &KcpConfig,
+    ) -> io::Result<KcpStream> {
         let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
 
         let udp = UdpSocket::bind(&local, handle)?;
@@ -75,14 +77,22 @@ impl KcpStream {
             Ok((n, addr)) => {
                 let buf = &self.buf[..n];
 
-                trace!("[RECV] UDP addr={} conv={} size={} {:?}", addr, get_conv(buf), n, ::debug::BsDebug(buf));
+                trace!(
+                    "[RECV] UDP addr={} conv={} size={} {:?}",
+                    addr,
+                    get_conv(buf),
+                    n,
+                    ::debug::BsDebug(buf)
+                );
                 match self.io.get_mut().input(buf) {
                     Ok(..) => Ok(()),
                     Err(err) => {
-                        error!("[RECV] Input for local addr={} error, recv addr={}, error: {:?}",
-                               self.udp.local_addr().unwrap(),
-                               addr,
-                               err);
+                        error!(
+                            "[RECV] Input for local addr={} error, recv addr={}, error: {:?}",
+                            self.udp.local_addr().unwrap(),
+                            addr,
+                            err
+                        );
                         Err(err)
                     }
                 }
@@ -159,13 +169,14 @@ pub struct ServerKcpStream {
 
 impl ServerKcpStream {
     #[doc(hidden)]
-    pub fn new_with_config(conv: u32,
-                           output_handle: KcpOutputHandle,
-                           addr: &SocketAddr,
-                           handle: &Handle,
-                           u: &mut KcpSessionManager,
-                           config: &KcpConfig)
-                           -> io::Result<ServerKcpStream> {
+    pub fn new_with_config(
+        conv: u32,
+        output_handle: KcpOutputHandle,
+        addr: &SocketAddr,
+        handle: &Handle,
+        u: &mut KcpSessionManager,
+        config: &KcpConfig,
+    ) -> io::Result<ServerKcpStream> {
         let output = KcpOutput::new_with_handle(output_handle, *addr);
         let kcp = SharedKcp::new_with_output(config, conv, output, config.stream);
 
@@ -176,8 +187,7 @@ impl ServerKcpStream {
 
         let io = EventedKcpIo::new(kcp, *addr, sess_exp, u, KcpSessionMode::Server)?;
         let io = PollEvented::new(io, handle)?;
-        Ok(ServerKcpStream { io: io })
-
+        Ok(ServerKcpStream { io })
     }
 
     #[doc(hidden)]

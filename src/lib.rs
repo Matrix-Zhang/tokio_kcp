@@ -8,10 +8,10 @@ extern crate mio;
 extern crate net2;
 #[macro_use]
 extern crate tokio_core;
+extern crate time;
 extern crate tokio_io;
 extern crate tokio_proto;
 extern crate tokio_service;
-extern crate time;
 #[macro_use]
 extern crate log;
 extern crate priority_queue;
@@ -24,14 +24,14 @@ pub use self::server::KcpServer;
 pub use self::session::{KcpSessionManager, KcpSessionUpdater};
 pub use self::stream::{KcpStream, ServerKcpStream};
 
-mod skcp;
-mod session;
-mod kcp_io;
-mod stream;
-mod listener;
-mod server;
 mod config;
 mod debug;
+mod kcp_io;
+mod listener;
+mod server;
+mod session;
+mod skcp;
+mod stream;
 
 #[inline]
 fn as_millisec(timespec: &Timespec) -> u32 {

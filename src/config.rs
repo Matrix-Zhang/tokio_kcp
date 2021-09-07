@@ -99,7 +99,12 @@ impl KcpConfig {
         }
 
         if let Some(ref nodelay) = self.nodelay {
-            k.set_nodelay(nodelay.nodelay, nodelay.interval, nodelay.resend, nodelay.nc);
+            k.set_nodelay(
+                nodelay.nodelay,
+                nodelay.interval,
+                nodelay.resend,
+                nodelay.nc,
+            );
         }
 
         if let Some(rm) = self.rx_minrto {

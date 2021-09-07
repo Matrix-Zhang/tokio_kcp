@@ -4,13 +4,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::thread;
 
-use {KcpListener, ServerKcpStream};
 use futures::future::{Future, Then};
 use futures::stream::Stream;
 use net2;
 use tokio_core::reactor::{Core, Handle};
 use tokio_proto::BindServer;
 use tokio_service::{NewService, Service};
+use {KcpListener, ServerKcpStream};
 
 /// A builder for TCP servers.
 ///
@@ -47,7 +47,7 @@ where
         KcpServer {
             _kind: PhantomData,
             proto: Arc::new(protocol),
-            addr: addr,
+            addr,
         }
     }
 
@@ -112,6 +112,7 @@ where
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn serve<P, Kind, F, S>(binder: Arc<P>, addr: SocketAddr, new_service: &F)
 where
     P: BindServer<Kind, ServerKcpStream>,
@@ -169,12 +170,14 @@ where
 
     let server = listener.incoming().for_each(move |(socket, _)| {
         let service = new_service.new_service()?;
-        binder.bind_server(&handle,
-                           socket,
-                           WrapService {
-                               inner: service,
-                               _marker: PhantomData,
-                           });
+        binder.bind_server(
+            &handle,
+            socket,
+            WrapService {
+                inner: service,
+                _marker: PhantomData,
+            },
+        );
 
         Ok(())
     });
@@ -189,6 +192,5 @@ fn listener(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
     };
     udp.reuse_address(true)?;
     udp.bind(addr)
-       .and_then(|udp| KcpListener::from_std_udp(udp, handle))
-
+        .and_then(|udp| KcpListener::from_std_udp(udp, handle))
 }

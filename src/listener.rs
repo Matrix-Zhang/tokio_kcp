@@ -37,7 +37,11 @@ impl Stream for Incoming {
 }
 
 impl KcpListener {
-    fn from_udp_with_config(udp: UdpSocket, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
+    fn from_udp_with_config(
+        udp: UdpSocket,
+        handle: &Handle,
+        config: KcpConfig,
+    ) -> io::Result<KcpListener> {
         KcpSessionManager::new(handle).map(|updater| {
             let shared_udp = Rc::new(udp);
             let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
@@ -46,17 +50,22 @@ impl KcpListener {
                 udp: shared_udp,
                 sessions: updater,
                 handle: handle.clone(),
-                config: config,
+                config,
                 buf: vec![0u8; config.mtu.unwrap_or(1400)],
-                output_handle: output_handle,
+                output_handle,
             }
         })
     }
     /// Creates a new `KcpListener` which will be bound to the specific address.
     ///
     /// The returned listener is ready for accepting connections.
-    pub fn bind_with_config(addr: &SocketAddr, handle: &Handle, config: KcpConfig) -> io::Result<KcpListener> {
-        UdpSocket::bind(addr, handle).and_then(|udp| Self::from_udp_with_config(udp, handle, config))
+    pub fn bind_with_config(
+        addr: &SocketAddr,
+        handle: &Handle,
+        config: KcpConfig,
+    ) -> io::Result<KcpListener> {
+        UdpSocket::bind(addr, handle)
+            .and_then(|udp| Self::from_udp_with_config(udp, handle, config))
     }
 
     /// Creates a new `KcpListener` which will be bound to the specific address with default config.
@@ -77,11 +86,13 @@ impl KcpListener {
     /// Creates a new `KcpListener` from prepared std::net::UdpSocket.
     ///
     /// The returned listener is ready for accepting connections.
-    pub fn from_std_udp_with_config(udp: net::UdpSocket,
-                                    handle: &Handle,
-                                    config: KcpConfig)
-                                    -> io::Result<KcpListener> {
-        UdpSocket::from_socket(udp, handle).and_then(|udp| Self::from_udp_with_config(udp, handle, config))
+    pub fn from_std_udp_with_config(
+        udp: net::UdpSocket,
+        handle: &Handle,
+        config: KcpConfig,
+    ) -> io::Result<KcpListener> {
+        UdpSocket::from_socket(udp, handle)
+            .and_then(|udp| Self::from_udp_with_config(udp, handle, config))
     }
 
     /// Returns the local socket address of this listener.
@@ -96,7 +107,13 @@ impl KcpListener {
 
             let buf = &mut self.buf[..size];
             let mut conv = get_conv(&*buf);
-            trace!("[RECV] size={} conv={} addr={} {:?}", size, conv, addr, ::debug::BsDebug(buf));
+            trace!(
+                "[RECV] size={} conv={} addr={} {:?}",
+                size,
+                conv,
+                addr,
+                ::debug::BsDebug(buf)
+            );
 
             if self.sessions.input_by_conv(conv, &addr, buf)? {
                 continue;
@@ -113,12 +130,14 @@ impl KcpListener {
                 set_conv(buf, conv);
             }
 
-            let mut stream = ServerKcpStream::new_with_config(conv,
-                                                              self.output_handle.clone(),
-                                                              &addr,
-                                                              &self.handle,
-                                                              &mut self.sessions,
-                                                              &self.config)?;
+            let mut stream = ServerKcpStream::new_with_config(
+                conv,
+                self.output_handle.clone(),
+                &addr,
+                &self.handle,
+                &mut self.sessions,
+                &self.config,
+            )?;
 
             // Input the initial packet
             stream.input(&*buf)?;

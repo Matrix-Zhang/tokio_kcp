@@ -8,8 +8,8 @@ extern crate tokio_io;
 extern crate env_logger;
 #[macro_use]
 extern crate log;
-extern crate time;
 extern crate rand;
+extern crate time;
 
 use std::env;
 use std::io::{self, Cursor, Read, Write};
@@ -17,8 +17,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::{Buf, BufMut, BytesMut, LittleEndian};
-use futures::{Async, Future, Poll, Stream};
 use futures::future::Either;
+use futures::{Async, Future, Poll, Stream};
 use time::Timespec;
 use tokio_core::reactor::{Core, Handle, Interval};
 use tokio_io::AsyncRead;
@@ -55,7 +55,8 @@ impl<W: Write> LoopSender<W> {
         LoopSender {
             w: Some(w),
             count: count,
-            intv: Interval::new(Duration::from_millis(20), handle).expect("Failed to create interval"),
+            intv: Interval::new(Duration::from_millis(20), handle)
+                .expect("Failed to create interval"),
             index: 0,
         }
     }
@@ -116,8 +117,18 @@ impl<R: Read> LoopReader<R> {
 
 impl<R: Read> Drop for LoopReader<R> {
     fn drop(&mut self) {
-        println!("{} {:?} mode result ({}ms)", self.i, self.mode, current() - self.start_ts);
-        println!("{} avgrtt={} maxrtt={}", self.i, self.sum_rtt / self.count, self.max_rtt);
+        println!(
+            "{} {:?} mode result ({}ms)",
+            self.i,
+            self.mode,
+            current() - self.start_ts
+        );
+        println!(
+            "{} avgrtt={} maxrtt={}",
+            self.i,
+            self.sum_rtt / self.count,
+            self.max_rtt
+        );
     }
 }
 
@@ -142,7 +153,10 @@ impl<R: Read> Future for LoopReader<R> {
             self.next += 1;
 
             let rtt = ccur - ts;
-            debug!("[RECV] {} mode={:?} sn={} rtt={}", self.i, self.mode, sn, rtt);
+            debug!(
+                "[RECV] {} mode={:?} sn={} rtt={}",
+                self.i, self.mode, sn, rtt
+            );
 
             self.sum_rtt += rtt as usize;
             if rtt as usize > self.max_rtt {
@@ -160,27 +174,27 @@ fn get_config(mode: TestMode) -> KcpConfig {
     match mode {
         TestMode::Default => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: false,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: false,
+            });
         }
         TestMode::Normal => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: false,
-                                      interval: 10,
-                                      resend: 0,
-                                      nc: true,
-                                  });
+                nodelay: false,
+                interval: 10,
+                resend: 0,
+                nc: true,
+            });
         }
         TestMode::Fast => {
             config.nodelay = Some(KcpNoDelayConfig {
-                                      nodelay: true,
-                                      interval: 10,
-                                      resend: 2,
-                                      nc: true,
-                                  });
+                nodelay: true,
+                interval: 10,
+                resend: 2,
+                nc: true,
+            });
 
             config.rx_minrto = Some(10);
             config.fast_resend = Some(1);
@@ -226,22 +240,25 @@ fn main() {
         let chandle = handle.clone();
 
         let mut updater = updater.clone();
-        let cli = futures::lazy(move || KcpStream::connect_with_config(0, &addr, &handle, &mut updater, &config))
-            .and_then(move |s| {
-                let (r, w) = s.split();
-                let w_fut = LoopSender::new(w, 1000, &chandle);
-                let r_fut = LoopReader::new(i, TestMode::Default, r, 1000);
-                // r_fut.join(w_fut)
-                r_fut.select2(w_fut).then(|r| match r {
-                                              Ok(..) => Ok(()),
-                                              Err(Either::A((err, ..))) |
-                                              Err(Either::B((err, ..))) => Err(err),
-                                          })
-            });
+        let cli = futures::lazy(move || {
+            KcpStream::connect_with_config(0, &addr, &handle, &mut updater, &config)
+        })
+        .and_then(move |s| {
+            let (r, w) = s.split();
+            let w_fut = LoopSender::new(w, 1000, &chandle);
+            let r_fut = LoopReader::new(i, TestMode::Default, r, 1000);
+            // r_fut.join(w_fut)
+            r_fut.select2(w_fut).then(|r| match r {
+                Ok(..) => Ok(()),
+                Err(Either::A((err, ..))) | Err(Either::B((err, ..))) => Err(err),
+            })
+        });
 
         match fut.take() {
             Some(f) => {
-                fut = Some(Box::new(f.join(cli).map(|_| ())) as Box<Future<Item = (), Error = io::Error>>);
+                fut =
+                    Some(Box::new(f.join(cli).map(|_| ()))
+                        as Box<Future<Item = (), Error = io::Error>>);
             }
             None => fut = Some(Box::new(cli) as Box<Future<Item = (), Error = io::Error>>),
         }
@@ -249,8 +266,8 @@ fn main() {
 
     let fut = fut.unwrap();
     let fut = fut.then(|_| {
-                           updater.stop();
-                           Ok::<(), ()>(())
-                       });
+        updater.stop();
+        Ok::<(), ()>(())
+    });
     core.run(fut).unwrap();
 }

@@ -7,8 +7,8 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use futures::{Async, Future, Poll, Stream};
 use futures::task::{self, Task};
+use futures::{Async, Future, Poll, Stream};
 use mio::{Ready, SetReadiness};
 use priority_queue::PriorityQueue;
 use tokio_core::reactor::{Handle, Timeout};
@@ -63,7 +63,11 @@ where
     S: Session + Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "sessions: {:?}, alloc_conv: {}", self.sessions, self.alloc_conv)
+        write!(
+            f,
+            "sessions: {:?}, alloc_conv: {}",
+            self.sessions, self.alloc_conv
+        )
     }
 }
 
@@ -85,7 +89,9 @@ where
     S: Session,
 {
     fn clone(&self) -> Self {
-        KcpSessionUpdater { inner: self.inner.clone() }
+        KcpSessionUpdater {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -109,26 +115,31 @@ where
 
         let u = KcpSessionUpdater {
             inner: Rc::new(RefCell::new(KcpSessionUpdaterInner {
-                                            sessions: HashMap::new(),
-                                            alloc_conv: 0,
-                                            is_stop: false,
-                                            timeout: timeout,
-                                            conv_queue: PriorityQueue::new(),
-                                            task: None,
-                                            known_endpoint: HashMap::new(),
-                                        })),
+                sessions: HashMap::new(),
+                alloc_conv: 0,
+                is_stop: false,
+                timeout,
+                conv_queue: PriorityQueue::new(),
+                task: None,
+                known_endpoint: HashMap::new(),
+            })),
         };
 
         let run_it = u.clone();
         handle.spawn(run_it.map_err(|err| {
-                                        error!("Session update failed! Err: {:?}", err);
-                                    }));
+            error!("Session update failed! Err: {:?}", err);
+        }));
 
         Ok(u)
     }
 
     #[doc(hidden)]
-    pub fn input_by_conv(&mut self, conv: u32, endpoint: &SocketAddr, buf: &mut [u8]) -> io::Result<bool> {
+    pub fn input_by_conv(
+        &mut self,
+        conv: u32,
+        endpoint: &SocketAddr,
+        buf: &mut [u8],
+    ) -> io::Result<bool> {
         let mut inner = self.inner.borrow_mut();
 
         if conv == 0 {
@@ -158,9 +169,10 @@ where
         inner.conv_queue.push(conv, InstantOrd(Instant::now()));
 
         {
-            let convs = inner.known_endpoint
-                             .entry(endpoint)
-                             .or_insert(HashSet::new());
+            let convs = inner
+                .known_endpoint
+                .entry(endpoint)
+                .or_insert_with(HashSet::new);
             convs.insert(conv);
         }
 
@@ -225,7 +237,9 @@ where
 
             let mut finished = Vec::new();
             let mut newly_push = Vec::new();
-            while let Some((conv, InstantOrd(inst))) = inner.conv_queue.peek().map(|(c, i)| (*c, *i)) {
+            while let Some((conv, InstantOrd(inst))) =
+                inner.conv_queue.peek().map(|(c, i)| (*c, *i))
+            {
                 let now = Instant::now();
                 if inst > now {
                     break;
@@ -233,9 +247,10 @@ where
 
                 let _ = inner.conv_queue.pop();
 
-                let sess = inner.sessions
-                                .get_mut(&conv)
-                                .expect("Impossible! Cannot find session by conv!");
+                let sess = inner
+                    .sessions
+                    .get_mut(&conv)
+                    .expect("Impossible! Cannot find session by conv!");
                 match sess.poll() {
                     Ok(Async::NotReady) => {
                         unreachable!();
@@ -305,22 +320,28 @@ pub struct KcpSession {
 }
 
 impl KcpSession {
-    pub fn new(kcp: SharedKcp, addr: SocketAddr, expire_dur: Duration, mode: KcpSessionMode) -> io::Result<KcpSession> {
+    pub fn new(
+        kcp: SharedKcp,
+        addr: SocketAddr,
+        expire_dur: Duration,
+        mode: KcpSessionMode,
+    ) -> io::Result<KcpSession> {
         let mut n = KcpSession {
-            kcp: kcp,
-            addr: addr,
-            expire_dur: expire_dur,
-            mode: mode,
+            kcp,
+            addr,
+            expire_dur,
+            mode,
         };
         n.update()?;
         Ok(n)
     }
 
-    pub fn new_shared(kcp: SharedKcp,
-                      addr: SocketAddr,
-                      expire_dur: Duration,
-                      mode: KcpSessionMode)
-                      -> io::Result<SharedKcpSession> {
+    pub fn new_shared(
+        kcp: SharedKcp,
+        addr: SocketAddr,
+        expire_dur: Duration,
+        mode: KcpSessionMode,
+    ) -> io::Result<SharedKcpSession> {
         let sess = KcpSession::new(kcp, addr, expire_dur, mode)?;
         Ok(Rc::new(RefCell::new(sess)))
     }
@@ -332,7 +353,12 @@ impl KcpSession {
 
     /// Called when you received a packet
     pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        trace!("[SESS] input size={} addr={} {:?}", buf.len(), self.addr, ::debug::BsDebug(buf));
+        trace!(
+            "[SESS] input size={} addr={} {:?}",
+            buf.len(),
+            self.addr,
+            ::debug::BsDebug(buf)
+        );
         self.kcp.input(buf)?;
         Ok(())
     }
@@ -350,7 +376,11 @@ impl KcpSession {
     /// Called if it is expired
     pub fn expire(&mut self) -> io::Result<()> {
         self.kcp.set_expired()?;
-        trace!("[SESS] addr={} conv={} is expired", self.addr, self.kcp.conv());
+        trace!(
+            "[SESS] addr={} conv={} is expired",
+            self.addr,
+            self.kcp.conv()
+        );
         Ok(())
     }
 
@@ -425,7 +455,12 @@ impl Stream for KcpSessionOperation {
         match sess.poll() {
             Err(err) => {
                 // Session is closed
-                trace!("[SESS] Close and remove addr={} conv={}, err: {}", sess.addr, sess.kcp.conv(), err);
+                trace!(
+                    "[SESS] Close and remove addr={} conv={}, err: {}",
+                    sess.addr,
+                    sess.kcp.conv(),
+                    err
+                );
 
                 // Awake pending reads
                 self.readiness.set_readiness(Ready::readable())?;
@@ -435,7 +470,11 @@ impl Stream for KcpSessionOperation {
             Ok(Async::Ready(Some(x))) => Ok(Async::Ready(Some(x))),
             Ok(Async::Ready(None)) => {
                 // Session is closed
-                trace!("[SESS] Close and remove addr={} conv={}", sess.addr, sess.kcp.conv());
+                trace!(
+                    "[SESS] Close and remove addr={} conv={}",
+                    sess.addr,
+                    sess.kcp.conv()
+                );
 
                 // Awake pending reads
                 self.readiness.set_readiness(Ready::readable())?;

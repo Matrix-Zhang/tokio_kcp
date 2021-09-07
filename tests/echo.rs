@@ -1,10 +1,10 @@
 extern crate tokio_kcp;
 #[macro_use]
 extern crate tokio_core;
-extern crate tokio_io;
+extern crate bytes;
 extern crate env_logger;
 extern crate futures;
-extern crate bytes;
+extern crate tokio_io;
 
 use std::io::{self, Cursor, Read, Write};
 use std::net::SocketAddr;
@@ -12,8 +12,8 @@ use std::net::SocketAddr;
 use bytes::{Buf, BufMut, BytesMut, LittleEndian};
 use futures::{Async, Future, Poll, Stream};
 use tokio_core::reactor::Core;
-use tokio_io::AsyncRead;
 use tokio_io::io::copy;
+use tokio_io::AsyncRead;
 
 use tokio_kcp::{KcpListener, KcpSessionManager, KcpStream};
 
@@ -105,16 +105,16 @@ fn echo() {
     let addr = listener.local_addr().unwrap();
 
     let svr = listener.incoming().for_each(move |(s, _)| {
-                                               let (r, w) = s.split();
-                                               let fut = copy(r, w);
-                                               handle.spawn(fut.map(|_| ()).map_err(|_| ()));
-                                               Ok(())
-                                           });
+        let (r, w) = s.split();
+        let fut = copy(r, w);
+        handle.spawn(fut.map(|_| ()).map_err(|_| ()));
+        Ok(())
+    });
 
     let handle = core.handle();
     handle.spawn(svr.map_err(|err| {
-                                 panic!("Failed to run server: {:?}", err);
-                             }));
+        panic!("Failed to run server: {:?}", err);
+    }));
 
     let mut updater = KcpSessionManager::new(&handle).unwrap();
 

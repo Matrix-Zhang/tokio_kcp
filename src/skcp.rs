@@ -1,227 +1,64 @@
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::io::{self, ErrorKind, Write};
-use std::net::SocketAddr;
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::{
+    io::{self, ErrorKind, Write},
+    net::SocketAddr,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+    time::{Duration, Instant},
+};
 
-use bytes::buf::FromBuf;
-use bytes::Bytes;
-use futures::task::{self, Task};
-use futures::{Async, Future, Poll};
-use kcp::{get_conv, Error as KcpError, Kcp, KcpResult};
-use tokio_core::net::UdpSocket;
-use tokio_core::reactor::Handle;
+use futures::future;
+use kcp::{Error as KcpError, Kcp, KcpResult};
+use log::{error, trace};
+use tokio::{net::UdpSocket, sync::mpsc};
 
-use config::KcpConfig;
+use crate::{utils::now_millis, KcpConfig};
 
-struct KcpOutputInner {
-    udp: Rc<UdpSocket>,
-    task: Option<Task>,
-    pkt_queue: VecDeque<(SocketAddr, Bytes)>,
-    is_finished: bool,
+/// Writer for sending packets to the underlying UdpSocket
+struct UdpOutput {
+    socket: Arc<UdpSocket>,
+    target_addr: SocketAddr,
+    delay_tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-impl KcpOutputInner {
-    fn new(udp: Rc<UdpSocket>) -> KcpOutputInner {
-        KcpOutputInner {
-            udp,
-            task: None,
-            pkt_queue: VecDeque::new(),
-            is_finished: false,
-        }
-    }
+impl UdpOutput {
+    /// Create a new Writer for writing packets to UdpSocket
+    pub fn new(socket: Arc<UdpSocket>, target_addr: SocketAddr) -> UdpOutput {
+        let (delay_tx, mut delay_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
-    fn notify(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.notify();
-        }
-    }
-
-    fn push_packet(&mut self, pkt: Bytes, peer: SocketAddr) {
-        self.pkt_queue.push_back((peer, pkt));
-        self.notify();
-    }
-
-    fn close(&mut self) {
-        self.is_finished = true;
-        self.notify();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.pkt_queue.is_empty()
-    }
-
-    fn send_or_push(&mut self, buf: &[u8], peer: &SocketAddr) -> io::Result<usize> {
-        if self.is_empty() {
-            match self.udp.send_to(buf, peer) {
-                Ok(n) => {
-                    trace!(
-                        "[SEND] UDP peer={} conv={} size={} {:?}",
-                        peer,
-                        get_conv(buf),
-                        buf.len(),
-                        ::debug::BsDebug(buf)
-                    );
-                    if n != buf.len() {
-                        error!(
-                            "[SEND] UDP Sent size={}, but packet is size={}",
-                            n,
-                            buf.len()
-                        );
+        {
+            let socket = socket.clone();
+            tokio::spawn(async move {
+                while let Some(buf) = delay_rx.recv().await {
+                    if let Err(err) = socket.send_to(&buf, target_addr).await {
+                        error!("[SEND] UDP delayed send failed, error: {}", err);
                     }
-                    return Ok(n);
                 }
-                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err),
-            }
+            });
         }
 
-        trace!(
-            "[SEND] Delay UDP peer={} conv={} size={} qsize={} {:?}",
-            peer,
-            get_conv(buf),
-            buf.len(),
-            self.pkt_queue.len(),
-            ::debug::BsDebug(buf)
-        );
-
-        self.push_packet(Bytes::from_buf(buf), *peer);
-        Ok(buf.len())
-    }
-}
-
-impl Drop for KcpOutputInner {
-    fn drop(&mut self) {
-        trace!(
-            "[SEND] KcpOutputInner dropping, ensuring the queue is finished? {}",
-            self.is_finished
-        );
-        self.close();
-    }
-}
-
-struct KcpOutputQueue {
-    inner: Rc<RefCell<KcpOutputInner>>,
-}
-
-impl Future for KcpOutputQueue {
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<(), io::Error> {
-        let mut inner = self.inner.borrow_mut();
-
-        while !inner.pkt_queue.is_empty() {
-            {
-                let &(ref peer, ref pkt) = &inner.pkt_queue[0];
-                let n = try_nb!(inner.udp.send_to(&*pkt, peer));
-                trace!(
-                    "[SEND] Delayed UDP peer={} conv={} size={} {:?}",
-                    peer,
-                    get_conv(pkt),
-                    pkt.len(),
-                    pkt
-                );
-                if n != pkt.len() {
-                    error!(
-                        "[SEND] Delayed Sent size={}, but packet is size={}",
-                        n,
-                        pkt.len()
-                    );
-                }
-            }
-
-            let _ = inner.pkt_queue.pop_front();
-        }
-
-        if inner.is_finished {
-            trace!(
-                "[SEND] Delayed UDP queue closing, local addr={}",
-                inner.udp.local_addr().unwrap()
-            );
-            Ok(Async::Ready(()))
-        } else {
-            inner.task = Some(task::current());
-            Ok(Async::NotReady)
+        UdpOutput {
+            socket,
+            target_addr,
+            delay_tx,
         }
     }
 }
 
-#[derive(Clone)]
-pub struct KcpOutputHandle {
-    inner: Rc<RefCell<KcpOutputInner>>,
-}
-
-impl KcpOutputHandle {
-    pub fn new(udp: Rc<UdpSocket>, handle: &Handle) -> KcpOutputHandle {
-        let inner = KcpOutputInner::new(udp);
-        let inner = Rc::new(RefCell::new(inner));
-        let queue = KcpOutputQueue {
-            inner: inner.clone(),
-        };
-        handle.spawn(queue.map_err(move |err| {
-            error!("[SEND] UDP output queue failed, err: {:?}", err);
-        }));
-        KcpOutputHandle { inner }
-    }
-
-    fn send_to(&mut self, buf: &[u8], peer: &SocketAddr) -> io::Result<usize> {
-        let mut inner = self.inner.borrow_mut();
-        inner.send_or_push(buf, peer)
-    }
-
-    fn udp(&self) -> Rc<UdpSocket> {
-        let inner = self.inner.borrow();
-        inner.udp.clone()
-    }
-
-    fn close(&mut self) {
-        let inner_ref_count = Rc::strong_count(&self.inner);
-        trace!("[KCP] KcpOutputHandle.inner has ref={}", inner_ref_count);
-
-        // Well, if ref count is 2, that means we are already the last instance of `KcpOutputHandle`.
-        // `KcpOutputQueue` holds the other ref of `KcpOutputInner`.
-        if inner_ref_count == 2 {
-            trace!("[KCP] KcpOutputHandle is closing the delay queue");
-            let mut inner = self.inner.borrow_mut();
-            inner.close();
-        }
-    }
-}
-
-pub struct KcpOutput {
-    inner: KcpOutputHandle,
-    peer: SocketAddr,
-}
-
-impl Drop for KcpOutput {
-    fn drop(&mut self) {
-        trace!("[KCP] KcpOutput is closing, try to close delay queue");
-        self.inner.close();
-    }
-}
-
-impl KcpOutput {
-    pub fn new(udp: Rc<UdpSocket>, peer: SocketAddr, handle: &Handle) -> KcpOutput {
-        KcpOutput::new_with_handle(KcpOutputHandle::new(udp, handle), peer)
-    }
-
-    pub fn new_with_handle(h: KcpOutputHandle, peer: SocketAddr) -> KcpOutput {
-        KcpOutput {
-            inner: h,
-            peer,
-        }
-    }
-
-    fn udp(&self) -> Rc<UdpSocket> {
-        self.inner.udp()
-    }
-}
-
-impl Write for KcpOutput {
+impl Write for UdpOutput {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.send_to(buf, &self.peer)
+        match self.socket.try_send_to(buf, self.target_addr) {
+            Ok(n) => Ok(n),
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                // send return EAGAIN
+                // ignored as packet was lost in transmission
+                trace!("[SEND] UDP send EAGAIN, packet.size: {} bytes, delayed send", buf.len());
+
+                self.delay_tx.send(buf.to_owned()).expect("channel closed unexpectly");
+
+                Ok(buf.len())
+            }
+            Err(err) => Err(err),
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -229,123 +66,28 @@ impl Write for KcpOutput {
     }
 }
 
-struct KcpCell {
-    kcp: Kcp<KcpOutput>,
+pub struct KcpSocket {
+    kcp: Kcp<UdpOutput>,
     last_update: Instant,
-    is_closed: bool,
-    send_task: Option<Task>,
-    udp: Rc<UdpSocket>,
-    recv_buf: Vec<u8>,
-    expired: bool,
-    sent_first: bool,
+    socket: Arc<UdpSocket>,
     flush_write: bool,
     flush_ack_input: bool,
+    input_buf: Vec<u8>,
+    sent_first: bool,
+    pending_sender: Option<Waker>,
+    pending_receiver: Option<Waker>,
+    closed: bool,
 }
 
-impl Drop for KcpCell {
-    fn drop(&mut self) {
-        trace!("[KCP] KcpCell is dropping, flushing pending packets");
-        let _ = self.kcp.flush();
-    }
-}
-
-impl KcpCell {
-    fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
-        match self.kcp.input(buf) {
-            Ok(..) => {}
-            Err(KcpError::ConvInconsistent(expected, actual)) => {
-                trace!(
-                    "[INPUT] Conv expected={} actual={} ignored",
-                    expected,
-                    actual
-                );
-                return Ok(());
-            }
-            Err(err) => return Err(err),
-        }
-        // self.kcp.input(buf)?;
-        self.last_update = Instant::now();
-
-        if self.flush_ack_input {
-            self.kcp.flush_ack()?;
-        }
-
-        Ok(())
-    }
-
-    fn input_self(&mut self, n: usize) -> KcpResult<()> {
-        match self.kcp.input(&self.recv_buf[..n]) {
-            Ok(..) => {}
-            Err(KcpError::ConvInconsistent(expected, actual)) => {
-                trace!(
-                    "[INPUT] Conv expected={} actual={} ignored",
-                    expected,
-                    actual
-                );
-                return Ok(());
-            }
-            Err(err) => return Err(err),
-        }
-        // self.kcp.input(&self.recv_buf[..n])?;
-        self.last_update = Instant::now();
-
-        if self.flush_ack_input {
-            self.kcp.flush_ack()?;
-        }
-
-        Ok(())
-    }
-
-    fn fetch(&mut self) -> KcpResult<()> {
-        if let Async::NotReady = self.udp.poll_read() {
-            return Ok(());
-        }
-
-        // Initialize with MTU
-        if self.recv_buf.len() < self.kcp.mtu() {
-            let mtu = self.kcp.mtu();
-            self.recv_buf.resize(mtu, 0);
-        }
-
-        let (n, addr) = match self.udp.recv_from(&mut self.recv_buf) {
-            Ok((n, addr)) => (n, addr),
-            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
-                return Ok(());
-            }
-            Err(err) => return Err(From::from(err)),
-        };
-
-        // Ah, we got something
-        trace!(
-            "[RECV] Fetch. SharedKcp recv size={}, addr={} {:?}",
-            n,
-            addr,
-            ::debug::BsDebug(&self.recv_buf[..n])
-        );
-        self.input_self(n)
-    }
-}
-
-#[derive(Clone)]
-pub struct SharedKcp {
-    inner: Rc<RefCell<KcpCell>>,
-}
-
-impl SharedKcp {
+impl KcpSocket {
     pub fn new(
         c: &KcpConfig,
         conv: u32,
-        udp: Rc<UdpSocket>,
-        peer: SocketAddr,
-        handle: &Handle,
+        socket: Arc<UdpSocket>,
+        target_addr: SocketAddr,
         stream: bool,
-    ) -> SharedKcp {
-        let output = KcpOutput::new(udp, peer, handle);
-        SharedKcp::new_with_output(c, conv, output, stream)
-    }
-
-    pub fn new_with_output(c: &KcpConfig, conv: u32, output: KcpOutput, stream: bool) -> SharedKcp {
-        let udp = output.udp();
+    ) -> KcpResult<KcpSocket> {
+        let output = UdpOutput::new(socket.clone(), target_addr);
         let mut kcp = if stream {
             Kcp::new_stream(conv, output)
         } else {
@@ -358,182 +100,318 @@ impl SharedKcp {
             kcp.input_conv();
         }
 
-        SharedKcp {
-            inner: Rc::new(RefCell::new(KcpCell {
-                kcp,
-                last_update: Instant::now(),
-                is_closed: false,
-                send_task: None,
-                udp,
-                recv_buf: Vec::new(), // Do not initialize it yet.
-                expired: false,
-                sent_first: false,
-                flush_write: c.flush_write,
-                flush_ack_input: c.flush_acks_input,
-            })),
-        }
+        kcp.update(now_millis())?;
+
+        Ok(KcpSocket {
+            kcp,
+            last_update: Instant::now(),
+            socket,
+            flush_write: c.flush_write,
+            flush_ack_input: c.flush_acks_input,
+            input_buf: Vec::new(),
+            sent_first: false,
+            pending_sender: None,
+            pending_receiver: None,
+            closed: false,
+        })
     }
 
     /// Call every time you got data from transmission
     pub fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
-        let mut inner = self.inner.borrow_mut();
-        inner.input(buf)
+        match self.kcp.input(buf) {
+            Ok(..) => {}
+            Err(KcpError::ConvInconsistent(expected, actual)) => {
+                trace!("[INPUT] Conv expected={} actual={} ignored", expected, actual);
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        }
+        self.last_update = Instant::now();
+
+        if self.flush_ack_input {
+            self.kcp.flush_ack()?;
+        }
+
+        Ok(())
     }
 
     /// Recv then input, ignore WouldBlock
     pub fn fetch(&mut self) -> KcpResult<()> {
-        let mut inner = self.inner.borrow_mut();
-        inner.fetch()
+        if self.kcp.mtu() > self.input_buf.len() {
+            self.input_buf.resize(self.kcp.mtu(), 0);
+        }
+
+        let n = match self.socket.try_recv(&mut self.input_buf) {
+            Ok(n) => n,
+            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                // Ignore EAGAIN, nothing to read
+                return Ok(());
+            }
+            Err(err) => return Err(From::from(err)),
+        };
+
+        // self.input_buf won't be used in self.input()
+        let input_buf = unsafe { &mut *(&mut self.input_buf[..n] as *mut _) };
+        self.input(input_buf)
     }
 
     /// Call if you want to send some data
-    pub fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
-        let mut inner = self.inner.borrow_mut();
-
-        if inner.expired {
-            let err = io::Error::new(ErrorKind::BrokenPipe, "session expired");
-            return Err(From::from(err));
+    pub fn poll_send(&mut self, cx: &mut Context<'_>, mut buf: &[u8]) -> Poll<KcpResult<usize>> {
+        if self.closed {
+            return Ok(0).into();
         }
 
         // If:
         //     1. Have sent the first packet (asking for conv)
         //     2. Too many pending packets
-        if inner.sent_first
-            && (inner.kcp.wait_snd() >= inner.kcp.snd_wnd() as usize || inner.kcp.waiting_conv())
-        {
+        if self.sent_first && (self.kcp.wait_snd() >= self.kcp.snd_wnd() as usize || self.kcp.waiting_conv()) {
             trace!(
                 "[SEND] waitsnd={} sndwnd={} excceeded or waiting conv={}",
-                inner.kcp.wait_snd(),
-                inner.kcp.snd_wnd(),
-                inner.kcp.waiting_conv()
+                self.kcp.wait_snd(),
+                self.kcp.snd_wnd(),
+                self.kcp.waiting_conv()
             );
-            inner.send_task = Some(task::current());
-            return Err(From::from(io::Error::new(
-                ErrorKind::WouldBlock,
-                "too many pending packets",
-            )));
+            self.pending_sender = Some(cx.waker().clone());
+            return Poll::Pending;
         }
 
-        if !inner.sent_first && inner.kcp.waiting_conv() {
-            assert!(
-                buf.len() <= inner.kcp.mss() as usize,
-                "First packet must be smaller than mss"
-            );
+        if !self.sent_first && self.kcp.waiting_conv() && buf.len() > self.kcp.mss() as usize {
+            buf = &buf[..self.kcp.mss() as usize];
         }
 
-        let n = inner.kcp.send(buf)?;
-        inner.sent_first = true;
-        inner.last_update = Instant::now();
+        let n = self.kcp.send(buf)?;
+        self.sent_first = true;
+        self.last_update = Instant::now();
 
-        if inner.flush_write {
-            inner.kcp.flush()?;
+        if self.flush_write {
+            self.kcp.flush()?;
         }
 
-        Ok(n)
+        Ok(n).into()
     }
 
-    /// Try to notify writable
-    pub fn try_notify_writable(&mut self) {
-        let mut inner = self.inner.borrow_mut();
-        if inner.kcp.wait_snd() < inner.kcp.snd_wnd() as usize && !inner.kcp.waiting_conv() {
-            if let Some(task) = inner.send_task.take() {
-                task.notify();
+    /// Call if you want to send some data
+    pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_send(cx, buf)).await
+    }
+
+    pub fn try_recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
+        if self.closed {
+            return Ok(0);
+        }
+        self.kcp.recv(buf)
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<KcpResult<usize>> {
+        if self.closed {
+            return Ok(0).into();
+        }
+
+        match self.kcp.recv(buf) {
+            Ok(n) => Ok(n).into(),
+            Err(KcpError::RecvQueueEmpty) => {
+                self.pending_receiver = Some(cx.waker().clone());
+                Poll::Pending
             }
+            Err(err) => Err(err).into(),
         }
     }
 
-    /// Call if you want to get some data
-    /// Always call right after input
-    pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
-        let mut inner = self.inner.borrow_mut();
-        if inner.expired {
-            // If it is already expired, return error
-            let err = io::Error::new(ErrorKind::BrokenPipe, "session expired");
-            return Err(From::from(err));
-        }
-
-        let n = inner.kcp.recv(buf)?;
-        inner.last_update = Instant::now();
-        Ok(n)
+    pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_recv(cx, buf)).await
     }
 
-    /// Call if you want to flush all pending data in queue
     pub fn flush(&mut self) -> KcpResult<()> {
-        let mut inner = self.inner.borrow_mut();
-        inner.kcp.flush()?;
-        inner.last_update = Instant::now();
+        self.kcp.flush()?;
+        self.last_update = Instant::now();
         Ok(())
     }
 
-    /// Tell me how long this session have no interaction
-    pub fn elapsed(&self) -> Duration {
-        let inner = self.inner.borrow();
-        inner.last_update.elapsed()
-    }
+    pub fn update(&mut self) -> KcpResult<Instant> {
+        let now = now_millis();
+        self.kcp.update(now)?;
+        let next = self.kcp.check(now);
 
-    /// Make this session expire, all read apis will return 0 (EOF)
-    /// It will flush the buffer when it is called
-    pub fn set_expired(&mut self) -> KcpResult<()> {
-        let mut inner = self.inner.borrow_mut();
-        inner.expired = true;
-
-        if let Some(task) = inner.send_task.take() {
-            task.notify();
+        if self.pending_sender.is_some()
+            && self.kcp.wait_snd() < self.kcp.snd_wnd() as usize
+            && !self.kcp.waiting_conv()
+        {
+            let waker = self.pending_sender.take().unwrap();
+            waker.wake();
         }
 
-        inner.kcp.flush()
-    }
+        if self.pending_receiver.is_some() {
+            if let Ok(peek) = self.kcp.peeksize() {
+                if peek > 0 {
+                    let waker = self.pending_receiver.take().unwrap();
+                    waker.wake();
+                }
+            }
+        }
 
-    /// Call in every tick
-    /// Returns when to call this function again
-    pub fn update(&mut self) -> KcpResult<Instant> {
-        let mut inner = self.inner.borrow_mut();
-        inner.kcp.update(::current())?;
-        let next = inner.kcp.check(::current());
         Ok(Instant::now() + Duration::from_millis(next as u64))
-        // Ok(Instant::now() + Duration::from_millis(5))
     }
 
-    /// Check if send queue is empty
-    pub fn has_waitsnd(&self) -> bool {
-        let inner = self.inner.borrow();
-        inner.kcp.wait_snd() != 0
-    }
-
-    /// Get mtu
-    pub fn mtu(&self) -> usize {
-        let inner = self.inner.borrow();
-        inner.kcp.mtu()
-    }
-
-    /// Set is close
     pub fn close(&mut self) {
-        let mut inner = self.inner.borrow_mut();
-        trace!("[KCP] Set close, conv={}", inner.kcp.conv());
-        inner.is_closed = true;
+        self.closed = true;
+        if let Some(w) = self.pending_sender.take() {
+            w.wake();
+        }
+        if let Some(w) = self.pending_receiver.take() {
+            w.wake();
+        }
     }
 
-    /// Check if it is closed
-    pub fn is_closed(&self) -> bool {
-        let inner = self.inner.borrow();
-        inner.is_closed
+    pub fn udp_socket(&self) -> &UdpSocket {
+        self.socket.as_ref()
     }
 
-    /// Check if it can read
-    pub fn can_read(&self) -> bool {
-        let inner = self.inner.borrow();
-        inner.kcp.peeksize().unwrap_or(0) != 0
+    pub fn can_close(&self) -> bool {
+        self.kcp.wait_snd() == 0
     }
 
-    /// Peek
-    pub fn peeksize(&self) -> usize {
-        let inner = self.inner.borrow();
-        inner.kcp.peeksize().unwrap_or(0)
-    }
-
-    /// Get conv
     pub fn conv(&self) -> u32 {
-        let inner = self.inner.borrow();
-        inner.kcp.conv()
+        self.kcp.conv()
+    }
+
+    pub fn peek_size(&self) -> KcpResult<usize> {
+        self.kcp.peeksize()
+    }
+
+    pub fn last_update_time(&self) -> Instant {
+        self.last_update
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use kcp::Error as KcpError;
+    use log::trace;
+    use std::sync::Arc;
+    use tokio::{
+        net::UdpSocket,
+        sync::Mutex,
+        time::{self, Instant},
+    };
+
+    use super::KcpSocket;
+    use crate::config::KcpConfig;
+
+    #[tokio::test]
+    async fn kcp_echo() {
+        let _ = env_logger::try_init();
+
+        static CONV: u32 = 0xdeadbeef;
+
+        // s1 connects s2
+        let s1 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let s2 = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        let s1_addr = s1.local_addr().unwrap();
+        let s2_addr = s2.local_addr().unwrap();
+
+        let s1 = Arc::new(s1);
+        let s2 = Arc::new(s2);
+
+        let config = KcpConfig::default();
+        let kcp1 = KcpSocket::new(&config, 0, s1.clone(), s2_addr, true).unwrap();
+        let kcp2 = KcpSocket::new(&config, CONV, s2.clone(), s1_addr, true).unwrap();
+
+        let kcp1 = Arc::new(Mutex::new(kcp1));
+        let kcp2 = Arc::new(Mutex::new(kcp2));
+
+        let kcp1_task = {
+            let kcp1 = kcp1.clone();
+            tokio::spawn(async move {
+                loop {
+                    let mut kcp = kcp1.lock().await;
+                    let next = kcp.update().expect("update");
+                    trace!("kcp1 next tick {:?}", next);
+                    time::sleep_until(Instant::from_std(next)).await;
+                }
+            })
+        };
+
+        let kcp2_task = {
+            let kcp2 = kcp2.clone();
+            tokio::spawn(async move {
+                loop {
+                    let mut kcp = kcp2.lock().await;
+                    let next = kcp.update().expect("update");
+                    trace!("kcp2 next tick {:?}", next);
+                    time::sleep_until(Instant::from_std(next)).await;
+                }
+            })
+        };
+
+        const SEND_BUFFER: &[u8] = b"HELLO WORLD";
+
+        {
+            let n = kcp1.lock().await.send(SEND_BUFFER).await.unwrap();
+            assert_eq!(n, SEND_BUFFER.len());
+        }
+
+        let echo_task = tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+
+            loop {
+                let n = s2.recv(&mut buf).await.unwrap();
+
+                let packet = &mut buf[..n];
+
+                let conv = kcp::get_conv(packet);
+                if conv == 0 {
+                    kcp::set_conv(packet, CONV);
+                }
+
+                let mut kcp2 = kcp2.lock().await;
+                kcp2.input(packet).unwrap();
+
+                match kcp2.try_recv(&mut buf) {
+                    Ok(n) => {
+                        let received = &buf[..n];
+                        kcp2.send(received).await.unwrap();
+                    }
+                    Err(KcpError::RecvQueueEmpty) => {
+                        continue;
+                    }
+                    Err(err) => {
+                        panic!("kcp.recv error: {:?}", err);
+                    }
+                }
+            }
+        });
+
+        {
+            let mut buf = [0u8; 1024];
+
+            loop {
+                let n = s1.recv(&mut buf).await.unwrap();
+
+                let packet = &buf[..n];
+
+                let mut kcp1 = kcp1.lock().await;
+                kcp1.input(packet).unwrap();
+
+                match kcp1.try_recv(&mut buf) {
+                    Ok(n) => {
+                        let received = &buf[..n];
+                        assert_eq!(received, SEND_BUFFER);
+                        break;
+                    }
+                    Err(KcpError::RecvQueueEmpty) => {
+                        continue;
+                    }
+                    Err(err) => {
+                        panic!("kcp.recv error: {:?}", err);
+                    }
+                }
+            }
+        }
+
+        echo_task.abort();
+        kcp1_task.abort();
+        kcp2_task.abort();
     }
 }

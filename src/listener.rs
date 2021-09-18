@@ -1,159 +1,178 @@
-use std::io;
-use std::net::{self, SocketAddr};
-use std::rc::Rc;
+use std::{
+    io::{self, ErrorKind},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 
-use futures::{Async, Poll, Stream};
-use kcp::{get_conv, set_conv};
-use tokio_core::net::UdpSocket;
-use tokio_core::reactor::Handle;
+use byte_string::ByteStr;
+use kcp::{Error as KcpError, KcpResult};
+use log::{debug, error, trace};
+use tokio::{
+    net::{ToSocketAddrs, UdpSocket},
+    sync::mpsc,
+    task::JoinHandle,
+    time,
+};
 
-use config::KcpConfig;
-use session::KcpSessionManager;
-use skcp::KcpOutputHandle;
-use stream::ServerKcpStream;
+use crate::{config::KcpConfig, session::KcpSessionManager, stream::KcpServerStream};
 
-/// A KCP Socket server
 pub struct KcpListener {
-    udp: Rc<UdpSocket>,
-    sessions: KcpSessionManager,
-    handle: Handle,
-    config: KcpConfig,
-    buf: Vec<u8>,
-    output_handle: KcpOutputHandle,
-}
-
-/// An iterator that infinitely accepts connections on a `KcpListener`
-pub struct Incoming {
-    inner: KcpListener,
-}
-
-impl Stream for Incoming {
-    type Item = (ServerKcpStream, SocketAddr);
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, io::Error> {
-        Ok(Async::Ready(Some(try_nb!(self.inner.accept()))))
-    }
-}
-
-impl KcpListener {
-    fn from_udp_with_config(
-        udp: UdpSocket,
-        handle: &Handle,
-        config: KcpConfig,
-    ) -> io::Result<KcpListener> {
-        KcpSessionManager::new(handle).map(|updater| {
-            let shared_udp = Rc::new(udp);
-            let output_handle = KcpOutputHandle::new(shared_udp.clone(), handle);
-
-            KcpListener {
-                udp: shared_udp,
-                sessions: updater,
-                handle: handle.clone(),
-                config,
-                buf: vec![0u8; config.mtu.unwrap_or(1400)],
-                output_handle,
-            }
-        })
-    }
-    /// Creates a new `KcpListener` which will be bound to the specific address.
-    ///
-    /// The returned listener is ready for accepting connections.
-    pub fn bind_with_config(
-        addr: &SocketAddr,
-        handle: &Handle,
-        config: KcpConfig,
-    ) -> io::Result<KcpListener> {
-        UdpSocket::bind(addr, handle)
-            .and_then(|udp| Self::from_udp_with_config(udp, handle, config))
-    }
-
-    /// Creates a new `KcpListener` which will be bound to the specific address with default config.
-    ///
-    /// The returned listener is ready for accepting connections.
-    pub fn bind(addr: &SocketAddr, handle: &Handle) -> io::Result<KcpListener> {
-        KcpListener::bind_with_config(addr, handle, KcpConfig::default())
-    }
-
-    /// Creates a new `KcpListener` from prepared std::net::UdpSocket with default config.
-    ///
-    /// The returned listener is ready for accepting connections.
-    pub fn from_std_udp(udp: net::UdpSocket, handle: &Handle) -> io::Result<KcpListener> {
-        UdpSocket::from_socket(udp, handle)
-            .and_then(|udp| Self::from_udp_with_config(udp, handle, KcpConfig::default()))
-    }
-
-    /// Creates a new `KcpListener` from prepared std::net::UdpSocket.
-    ///
-    /// The returned listener is ready for accepting connections.
-    pub fn from_std_udp_with_config(
-        udp: net::UdpSocket,
-        handle: &Handle,
-        config: KcpConfig,
-    ) -> io::Result<KcpListener> {
-        UdpSocket::from_socket(udp, handle)
-            .and_then(|udp| Self::from_udp_with_config(udp, handle, config))
-    }
-
-    /// Returns the local socket address of this listener.
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.udp.local_addr()
-    }
-
-    /// Accept a new incoming connection from this listener.
-    pub fn accept(&mut self) -> io::Result<(ServerKcpStream, SocketAddr)> {
-        loop {
-            let (size, addr) = self.udp.recv_from(&mut self.buf)?;
-
-            let buf = &mut self.buf[..size];
-            let mut conv = get_conv(&*buf);
-            trace!(
-                "[RECV] size={} conv={} addr={} {:?}",
-                size,
-                conv,
-                addr,
-                ::debug::BsDebug(buf)
-            );
-
-            if self.sessions.input_by_conv(conv, &addr, buf)? {
-                continue;
-            }
-
-            trace!("[ACPT] Accepted connection {}", addr);
-
-            // Set `conv` to 0 means let the server allocate a `conv` for it
-            if conv == 0 {
-                conv = self.sessions.get_free_conv();
-                trace!("[ACPT] Allocated conv={} for {}", conv, addr);
-
-                // Set to buffer
-                set_conv(buf, conv);
-            }
-
-            let mut stream = ServerKcpStream::new_with_config(
-                conv,
-                self.output_handle.clone(),
-                &addr,
-                &self.handle,
-                &mut self.sessions,
-                &self.config,
-            )?;
-
-            // Input the initial packet
-            stream.input(&*buf)?;
-
-            return Ok((stream, addr));
-        }
-    }
-
-    /// Returns an iterator over the connections being received on this listener.
-    pub fn incoming(self) -> Incoming {
-        Incoming { inner: self }
-    }
+    udp: Arc<UdpSocket>,
+    accept_rx: mpsc::Receiver<(KcpServerStream, SocketAddr)>,
+    task_watcher: JoinHandle<()>,
 }
 
 impl Drop for KcpListener {
     fn drop(&mut self) {
-        self.sessions.stop();
+        self.task_watcher.abort();
+    }
+}
+
+impl KcpListener {
+    pub async fn bind<A: ToSocketAddrs>(config: KcpConfig, addr: A) -> KcpResult<KcpListener> {
+        let udp = UdpSocket::bind(addr).await?;
+        let udp = Arc::new(udp);
+        let server_udp = udp.clone();
+
+        let (accept_tx, accept_rx) = mpsc::channel(1024 /* backlogs */);
+        let task_watcher = tokio::spawn(async move {
+            let (close_tx, mut close_rx) = mpsc::channel(64);
+
+            let mut sessions = KcpSessionManager::new();
+            let mut packet_buffer = [0u8; 65536];
+            loop {
+                tokio::select! {
+                    conv = close_rx.recv() => {
+                        let conv = conv.expect("close_tx closed unexpectly");
+                        sessions.close_conv(conv);
+                        trace!("session conv: {} removed", conv);
+                    }
+
+                    recv_res = udp.recv_from(&mut packet_buffer) => {
+                        match recv_res {
+                            Err(err) => {
+                                error!("udp.recv_from failed, error: {}", err);
+                                time::sleep(Duration::from_secs(1)).await;
+                            }
+                            Ok((n, peer_addr)) => {
+                                let packet = &mut packet_buffer[..n];
+
+                                log::trace!("received peer: {}, {:?}", peer_addr, ByteStr::new(packet));
+
+                                let mut conv = kcp::get_conv(packet);
+                                if conv == 0 {
+                                    // Allocate a conv for client.
+                                    conv = sessions.alloc_conv();
+                                    debug!("allocate {} conv for peer: {}", conv, peer_addr);
+
+                                    kcp::set_conv(packet, conv);
+                                }
+
+                                let session = match sessions.get_or_create(&config, conv, &udp, peer_addr, &close_tx) {
+                                    Ok((s, created)) => {
+                                        if created {
+                                            // Created a new session, constructed a new accepted client
+                                            let stream = KcpServerStream::with_session(s.clone());
+                                            if let Err(..) = accept_tx.try_send((stream, peer_addr)) {
+                                                debug!("failed to create accepted stream due to channel failure");
+
+                                                // remove it from session
+                                                sessions.close_conv(conv);
+                                                continue;
+                                            }
+                                        }
+
+                                        s
+                                    },
+                                    Err(err) => {
+                                        error!("failed to create session, error: {}, peer: {}, conv: {}", err, peer_addr, conv);
+                                        continue;
+                                    }
+                                };
+
+                                let mut kcp = session.kcp_socket().lock().await;
+                                if let Err(err) = kcp.input(packet) {
+                                    error!("kcp.input failed, peer: {}, conv: {}, error: {}, packet: {:?}", peer_addr, conv, err, ByteStr::new(packet));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(KcpListener {
+            udp: server_udp,
+            accept_rx,
+            task_watcher,
+        })
+    }
+
+    pub async fn accept(&mut self) -> KcpResult<(KcpServerStream, SocketAddr)> {
+        match self.accept_rx.recv().await {
+            Some(s) => Ok(s),
+            None => Err(KcpError::IoError(io::Error::new(
+                ErrorKind::Other,
+                "accept channel closed unexpectly",
+            ))),
+        }
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.udp.local_addr()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::KcpListener;
+    use crate::{config::KcpConfig, stream::KcpStream};
+    use futures::future;
+
+    #[tokio::test]
+    async fn multi_echo() {
+        let _ = env_logger::try_init();
+
+        let mut listener = KcpListener::bind(KcpConfig::default(), "127.0.0.1:0").await.unwrap();
+        let server_addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 8192];
+                    while let Ok(n) = stream.recv(&mut buffer).await {
+                        let data = &buffer[..n];
+
+                        let mut sent = 0;
+                        while sent < n {
+                            let sn = stream.send(&data[sent..]).await.unwrap();
+                            sent += sn;
+                        }
+                    }
+                });
+            }
+        });
+
+        let mut vfut = Vec::new();
+
+        for _ in 1..100 {
+            vfut.push(async move {
+                let mut stream = KcpStream::connect(&KcpConfig::default(), server_addr).await.unwrap();
+
+                for _ in 1..20 {
+                    const SEND_BUFFER: &[u8] = b"HELLO WORLD";
+                    assert_eq!(SEND_BUFFER.len(), stream.send(SEND_BUFFER).await.unwrap());
+
+                    let mut buffer = [0u8; 1024];
+                    let n = stream.recv(&mut buffer).await.unwrap();
+                    assert_eq!(SEND_BUFFER, &buffer[..n]);
+                }
+            });
+        }
+
+        future::join_all(vfut).await;
     }
 }

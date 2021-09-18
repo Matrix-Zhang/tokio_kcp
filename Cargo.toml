@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.7.1"
+version = "0.8.0"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
@@ -8,21 +8,16 @@ readme = "README.md"
 keywords = ["kcp", "udp", "reliable", "tokio"]
 documentation = "https://docs.rs/tokio_kcp"
 repository = "https://github.com/Matrix-Zhang/tokio_kcp"
+edition = "2018"
 
 [dependencies]
-bytes = "0.4"
-futures = "0.1"
+bytes = "1.1"
+futures = "0.3"
 kcp = "0.4"
-log = "0.3"
-mio = "0.6"
-net2 = "0.2"
-priority-queue = "1"
-time = "0.1"
-tokio-core = "0.1"
-tokio-io = "0.1"
-tokio-proto = "0.1"
-tokio-service = "0.1"
+log = "0.4"
+tokio = { version = "1.11", features = ["net", "sync", "rt"] }
+byte_string = "1"
 
 [dev-dependencies]
-env_logger = "0.4.3"
-rand = "0.3"
+env_logger = "0.9"
+tokio = { version = "1.11", features = ["net", "sync", "rt", "rt-multi-thread", "macros", "time", "io-util", "io-std"]}

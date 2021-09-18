@@ -1,7 +1,6 @@
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
 use kcp::Kcp;
-use skcp::KcpOutput;
 
 /// Kcp Delay Config
 #[derive(Debug, Clone, Copy)]
@@ -58,9 +57,7 @@ pub struct KcpConfig {
     /// Minimal resend timeout
     pub rx_minrto: Option<u32>,
     /// Session expire duration, default is 90 seconds
-    pub session_expire: Option<Duration>,
-    /// Fast resend
-    pub fast_resend: Option<u32>,
+    pub session_expire: Duration,
     /// Flush KCP state immediately after write
     pub flush_write: bool,
     /// Flush ACKs immediately after input
@@ -77,8 +74,7 @@ impl Default for KcpConfig {
             nodelay: None,
             wnd_size: None,
             rx_minrto: None,
-            session_expire: None,
-            fast_resend: None,
+            session_expire: Duration::from_secs(90),
             flush_write: true,
             flush_acks_input: true,
             stream: true,
@@ -89,7 +85,7 @@ impl Default for KcpConfig {
 impl KcpConfig {
     /// Applies config onto `Kcp`
     #[doc(hidden)]
-    pub fn apply_config(&self, k: &mut Kcp<KcpOutput>) {
+    pub fn apply_config<W: Write>(&self, k: &mut Kcp<W>) {
         if let Some(mtu) = self.mtu {
             k.set_mtu(mtu).expect("Invalid MTU");
         }
@@ -99,12 +95,7 @@ impl KcpConfig {
         }
 
         if let Some(ref nodelay) = self.nodelay {
-            k.set_nodelay(
-                nodelay.nodelay,
-                nodelay.interval,
-                nodelay.resend,
-                nodelay.nc,
-            );
+            k.set_nodelay(nodelay.nodelay, nodelay.interval, nodelay.resend, nodelay.nc);
         }
 
         if let Some(rm) = self.rx_minrto {
@@ -113,10 +104,6 @@ impl KcpConfig {
 
         if let Some(ws) = self.wnd_size {
             k.set_wndsize(ws.0, ws.1);
-        }
-
-        if let Some(fr) = self.fast_resend {
-            k.set_fast_resend(fr);
         }
     }
 }

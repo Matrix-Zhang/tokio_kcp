@@ -1,119 +1,47 @@
-extern crate env_logger;
-extern crate futures;
-extern crate log;
-extern crate time;
-extern crate tokio_core;
-extern crate tokio_io;
-extern crate tokio_kcp;
+use std::{net::SocketAddr, time::Duration};
 
-use std::env;
-use std::net::SocketAddr;
+use byte_string::ByteStr;
+use log::{debug, error, info};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time,
+};
+use tokio_kcp::{KcpConfig, KcpListener};
 
-use env_logger::LogBuilder;
-use futures::future::Future;
-use futures::stream::Stream;
-use log::LogRecord;
-use tokio_core::reactor::Core;
-use tokio_io::io::copy;
-use tokio_io::AsyncRead;
-use tokio_kcp::{KcpConfig, KcpListener, KcpNoDelayConfig};
+#[tokio::main]
+async fn main() {
+    env_logger::init();
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum TestMode {
-    Default,
-    Normal,
-    Fast,
-}
+    let config = KcpConfig::default();
 
-fn get_config(mode: TestMode) -> KcpConfig {
-    let mut config = KcpConfig::default();
-    config.wnd_size = Some((128, 128));
-    match mode {
-        TestMode::Default => {
-            config.nodelay = Some(KcpNoDelayConfig {
-                nodelay: false,
-                interval: 10,
-                resend: 0,
-                nc: false,
-            });
-        }
-        TestMode::Normal => {
-            config.nodelay = Some(KcpNoDelayConfig {
-                nodelay: false,
-                interval: 10,
-                resend: 0,
-                nc: true,
-            });
-        }
-        TestMode::Fast => {
-            config.nodelay = Some(KcpNoDelayConfig {
-                nodelay: true,
-                interval: 10,
-                resend: 2,
-                nc: true,
-            });
+    let server_addr = "127.0.0.1:3100".parse::<SocketAddr>().unwrap();
 
-            config.rx_minrto = Some(10);
-            config.fast_resend = Some(1);
-        }
-    }
+    let mut listener = KcpListener::bind(config, server_addr).await.unwrap();
 
-    config
-}
-
-fn log_time(record: &LogRecord) -> String {
-    format!(
-        "[{}][{}] {}",
-        time::now().strftime("%Y-%m-%d][%H:%M:%S.%f").unwrap(),
-        record.level(),
-        record.args()
-    )
-}
-
-fn main() {
-    let mut log_builder = LogBuilder::new();
-    // Default filter
-    log_builder.format(log_time);
-    if let Ok(env_conf) = env::var("RUST_LOG") {
-        log_builder.parse(&env_conf);
-    }
-    log_builder.init().unwrap();
-
-    let addr = env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:2233".to_string());
-    let addr = addr.parse::<SocketAddr>().unwrap();
-
-    let mode = env::args().nth(2).unwrap_or_else(|| "default".to_string());
-    let mode = match &mode[..] {
-        "default" => TestMode::Default,
-        "normal" => TestMode::Normal,
-        "fast" => TestMode::Fast,
-        _ => panic!("Unrecognized mode {}", mode),
-    };
-
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
-
-    let config = get_config(mode);
-    let listener = KcpListener::bind_with_config(&addr, &handle, config).unwrap();
-    println!("listening on: {}", addr);
-
-    let echo = listener.incoming().for_each(|(stream, addr)| {
-        let (reader, writer) = stream.split();
-        let amt = copy(reader, writer);
-        let msg = amt.then(move |result| {
-            match result {
-                Ok((amt, ..)) => println!("wrote {} bytes to {}", amt, addr),
-                Err(e) => println!("error on {}: {}", addr, e),
+    loop {
+        let (mut stream, peer_addr) = match listener.accept().await {
+            Ok(s) => s,
+            Err(err) => {
+                error!("accept failed, error: {}", err);
+                time::sleep(Duration::from_secs(1)).await;
+                continue;
             }
-            Ok(())
+        };
+
+        info!("accepted {}", peer_addr);
+
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 8192];
+            while let Ok(n) = stream.read(&mut buffer).await {
+                debug!("recv {:?}", ByteStr::new(&buffer[..n]));
+                if n == 0 {
+                    break;
+                }
+                stream.write_all(&buffer[..n]).await.unwrap();
+                debug!("echo {:?}", ByteStr::new(&buffer[..n]));
+            }
+
+            debug!("client {} closed", peer_addr);
         });
-
-        handle.spawn(msg);
-
-        Ok(())
-    });
-
-    core.run(echo).unwrap();
+    }
 }

@@ -201,7 +201,7 @@ impl KcpServerStream {
         peer_addr: SocketAddr,
         session_close_notifier: mpsc::Sender<u32>,
     ) -> KcpResult<KcpServerStream> {
-        let socket = KcpSocket::new(config, conv, udp.clone(), peer_addr, true)?;
+        let socket = KcpSocket::new(config, conv, udp, peer_addr, true)?;
         let session = KcpSession::new_shared(socket, config.session_expire, Some(session_close_notifier));
         Ok(KcpServerStream::with_session(session))
     }

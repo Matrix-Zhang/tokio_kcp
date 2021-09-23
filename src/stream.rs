@@ -1,225 +1,330 @@
-use std::io::{self, ErrorKind, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::rc::Rc;
-use std::time::Duration;
+use std::{
+    io::{self, ErrorKind},
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use futures::{Async, Poll};
-use tokio_core::net::UdpSocket;
-use tokio_core::reactor::{Handle, PollEvented};
-use tokio_io::{AsyncRead, AsyncWrite};
+use futures::{future, ready};
+use kcp::{Error as KcpError, KcpResult};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    net::UdpSocket,
+    sync::mpsc,
+};
 
-use config::KcpConfig;
-use kcp::get_conv;
-use kcp_io::EventedKcpIo;
-use session::{KcpSessionManager, KcpSessionMode};
-use skcp::{KcpOutput, KcpOutputHandle, SharedKcp};
+use crate::{config::KcpConfig, session::KcpSession, skcp::KcpSocket};
 
-/// Default session expired timeout
-const SESSION_EXPIRED_SECONDS: u64 = 90;
-
-/// KCP client for interacting with server
 pub struct KcpStream {
-    udp: Rc<UdpSocket>,
-    io: PollEvented<EventedKcpIo>,
-    buf: Vec<u8>,
+    session: Arc<KcpSession>,
+    udp: Arc<UdpSocket>,
+    recv_buffer: Vec<u8>,
+    recv_buffer_pos: usize,
+    recv_buffer_cap: usize,
+}
+
+impl Drop for KcpStream {
+    fn drop(&mut self) {
+        self.session.close();
+    }
 }
 
 impl KcpStream {
-    #[doc(hidden)]
-    fn new(udp: Rc<UdpSocket>, io: PollEvented<EventedKcpIo>) -> KcpStream {
-        let buf = vec![0u8; io.get_ref().mtu()];
-        KcpStream { udp, io, buf }
-    }
-
-    /// Opens a KCP connection to a remote host.
-    ///
-    /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
-    pub fn connect(
-        conv: u32,
-        addr: &SocketAddr,
-        handle: &Handle,
-        u: &mut KcpSessionManager,
-    ) -> io::Result<KcpStream> {
-        KcpStream::connect_with_config(conv, addr, handle, u, &KcpConfig::default())
-    }
-
-    /// Opens a KCP connection to a remote host.
-    ///
-    /// `conv` represents a conversation. Set to 0 will allow server to allocate one for you.
-    pub fn connect_with_config(
-        conv: u32,
-        addr: &SocketAddr,
-        handle: &Handle,
-        u: &mut KcpSessionManager,
-        config: &KcpConfig,
-    ) -> io::Result<KcpStream> {
-        let local = SocketAddr::new(IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)), 0);
-
-        let udp = UdpSocket::bind(&local, handle)?;
-        let udp = Rc::new(udp);
-
-        // Create a standalone output kcp
-        let kcp = SharedKcp::new(config, conv, udp.clone(), *addr, handle, config.stream);
-
-        let sess_exp = match config.session_expire {
-            Some(dur) => dur,
-            None => Duration::from_secs(SESSION_EXPIRED_SECONDS),
+    pub async fn connect(config: &KcpConfig, addr: SocketAddr) -> KcpResult<KcpStream> {
+        let udp = match addr.ip() {
+            IpAddr::V4(..) => UdpSocket::bind("0.0.0.0:0").await?,
+            IpAddr::V6(..) => UdpSocket::bind("[::]:0").await?,
         };
 
-        let local_addr = udp.local_addr().expect("Failed to get local addr");
-        let io = EventedKcpIo::new(kcp, local_addr, sess_exp, u, KcpSessionMode::Client)?;
-        let io = PollEvented::new(io, handle)?;
-        Ok(KcpStream::new(udp, io))
+        let udp = Arc::new(udp);
+        let socket = KcpSocket::new(config, 0, udp.clone(), addr, config.stream)?;
+
+        let session = KcpSession::new_shared(socket, config.session_expire, None);
+
+        Ok(KcpStream {
+            session,
+            udp,
+            recv_buffer: Vec::new(),
+            recv_buffer_pos: 0,
+            recv_buffer_cap: 0,
+        })
     }
 
-    fn recv_from(&mut self) -> io::Result<()> {
-        match self.udp.recv_from(&mut self.buf) {
-            Ok((n, addr)) => {
-                let buf = &self.buf[..n];
-
-                trace!(
-                    "[RECV] UDP addr={} conv={} size={} {:?}",
-                    addr,
-                    get_conv(buf),
-                    n,
-                    ::debug::BsDebug(buf)
-                );
-                match self.io.get_mut().input(buf) {
-                    Ok(..) => Ok(()),
-                    Err(err) => {
-                        error!(
-                            "[RECV] Input for local addr={} error, recv addr={}, error: {:?}",
-                            self.udp.local_addr().unwrap(),
-                            addr,
-                            err
-                        );
-                        Err(err)
-                    }
-                }
+    pub fn poll_send(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<KcpResult<usize>> {
+        // Mutex doesn't have poll_lock, spinning on it.
+        let socket = self.session.kcp_socket();
+        let mut kcp = match socket.try_lock() {
+            Ok(guard) => guard,
+            Err(..) => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
             }
-            Err(err) => Err(err),
-        }
+        };
+
+        kcp.poll_send(cx, buf)
     }
 
-    fn io_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match self.io.read(buf) {
-            Ok(n) => {
-                trace!("[RECV] Evented.read size={}", n);
-                Ok(n)
-            }
-            Err(err) => Err(err),
-        }
+    pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_send(cx, buf)).await
     }
-}
 
-impl Read for KcpStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // loop until we got something
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<KcpResult<usize>> {
         loop {
-            match self.io.poll_read() {
-                Async::NotReady => {}
-                Async::Ready(..) => {
-                    match self.io_read(buf) {
-                        Ok(n) => return Ok(n),
-                        // Loop continue, maybe we have received an ACK packet
-                        Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
-                        Err(err) => return Err(err),
-                    }
-                }
+            // Consumes all data in buffer
+            if self.recv_buffer_pos < self.recv_buffer_cap {
+                let remaining = self.recv_buffer_cap - self.recv_buffer_pos;
+                let copy_length = remaining.min(buf.len());
+
+                buf.copy_from_slice(&self.recv_buffer[self.recv_buffer_pos..self.recv_buffer_pos + copy_length]);
+                self.recv_buffer_pos += copy_length;
+                return Ok(copy_length).into();
             }
 
-            match self.recv_from() {
-                Ok(..) => {}
-                Err(err) => {
-                    if err.kind() == ErrorKind::WouldBlock {
-                        self.io.need_read();
+            // Mutex doesn't have poll_lock, spinning on it.
+            let socket = self.session.kcp_socket();
+            let mut kcp = match socket.try_lock() {
+                Ok(guard) => guard,
+                Err(..) => {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+            };
+
+            loop {
+                // Try to read from KCP
+                // 1. Read directly with user provided `buf`
+                match kcp.try_recv(buf) {
+                    Ok(n) => return Ok(n).into(),
+                    Err(KcpError::RecvQueueEmpty) => {
+                        // Nothing in recv queue, read from UDP socket
+                        let mut packet_buffer = [0u8; 65536];
+                        let mut read_buffer = ReadBuf::new(&mut packet_buffer);
+                        ready!(self.udp.poll_recv(cx, &mut read_buffer))?;
+                        let packet = read_buffer.filled();
+
+                        log::trace!("client read {} bytes", packet.len());
+
+                        kcp.input(packet)?;
+                        continue;
                     }
-                    return Err(err);
+                    Err(KcpError::UserBufTooSmall) => {}
+                    Err(err) => return Err(err).into(),
+                }
+
+                // 2. User `buf` too small, read to recv_buffer
+                let required_size = kcp.peek_size()?;
+                if self.recv_buffer.len() < required_size {
+                    self.recv_buffer.resize(required_size, 0);
+                }
+
+                match kcp.try_recv(&mut self.recv_buffer) {
+                    Ok(n) => {
+                        self.recv_buffer_pos = 0;
+                        self.recv_buffer_cap = n;
+                        break;
+                    }
+                    Err(err) => return Err(err).into(),
                 }
             }
         }
     }
+
+    pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_recv(cx, buf)).await
+    }
 }
 
-impl AsyncRead for KcpStream {}
+impl AsyncRead for KcpStream {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match ready!(self.poll_recv(cx, buf.initialize_unfilled())) {
+            Ok(n) => {
+                buf.advance(n);
+                Ok(()).into()
+            }
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
+    }
+}
 
 impl AsyncWrite for KcpStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        Ok(().into())
-    }
-}
-
-impl Write for KcpStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.io.get_mut().write(buf)
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match ready!(self.poll_send(cx, buf)) {
+            Ok(n) => Ok(n).into(),
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.io.get_mut().flush()
-    }
-}
-
-/// KCP client between a local and remote socket
-///
-/// After creating a `KcpStream` by either connecting to a remote host or accepting a connection on a `KcpListener`,
-/// data can be transmitted by reading and writing to it.
-pub struct ServerKcpStream {
-    io: PollEvented<EventedKcpIo>,
-}
-
-impl ServerKcpStream {
-    #[doc(hidden)]
-    pub fn new_with_config(
-        conv: u32,
-        output_handle: KcpOutputHandle,
-        addr: &SocketAddr,
-        handle: &Handle,
-        u: &mut KcpSessionManager,
-        config: &KcpConfig,
-    ) -> io::Result<ServerKcpStream> {
-        let output = KcpOutput::new_with_handle(output_handle, *addr);
-        let kcp = SharedKcp::new_with_output(config, conv, output, config.stream);
-
-        let sess_exp = match config.session_expire {
-            Some(dur) => dur,
-            None => Duration::from_secs(SESSION_EXPIRED_SECONDS),
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Mutex doesn't have poll_lock, spinning on it.
+        let socket = self.session.kcp_socket();
+        let mut kcp = match socket.try_lock() {
+            Ok(guard) => guard,
+            Err(..) => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
         };
 
-        let io = EventedKcpIo::new(kcp, *addr, sess_exp, u, KcpSessionMode::Server)?;
-        let io = PollEvented::new(io, handle)?;
-        Ok(ServerKcpStream { io })
+        match kcp.flush() {
+            Ok(..) => Ok(()).into(),
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
     }
 
-    #[doc(hidden)]
-    pub fn input(&mut self, buf: &[u8]) -> io::Result<()> {
-        let io = self.io.get_mut();
-        io.input(buf)
-    }
-}
-
-impl Read for ServerKcpStream {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.io.read(buf)
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Ok(()).into()
     }
 }
 
-impl Write for ServerKcpStream {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // FIXME: Write does not have events yet
-        self.io.get_mut().write(buf)
-    }
+pub struct KcpServerStream {
+    session: Arc<KcpSession>,
+    recv_buffer: Vec<u8>,
+    recv_buffer_pos: usize,
+    recv_buffer_cap: usize,
+}
 
-    fn flush(&mut self) -> io::Result<()> {
-        // FIXME: Write does not have events yet
-        self.io.get_mut().flush()
+impl Drop for KcpServerStream {
+    fn drop(&mut self) {
+        self.session.close();
     }
 }
 
-impl AsyncRead for ServerKcpStream {}
+impl KcpServerStream {
+    pub fn new(
+        config: &KcpConfig,
+        udp: Arc<UdpSocket>,
+        conv: u32,
+        peer_addr: SocketAddr,
+        session_close_notifier: mpsc::Sender<u32>,
+    ) -> KcpResult<KcpServerStream> {
+        let socket = KcpSocket::new(config, conv, udp.clone(), peer_addr, true)?;
+        let session = KcpSession::new_shared(socket, config.session_expire, Some(session_close_notifier));
+        Ok(KcpServerStream::with_session(session))
+    }
 
-impl AsyncWrite for ServerKcpStream {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.io.get_mut().shutdown()?;
-        Ok(Async::Ready(()))
+    pub fn with_session(session: Arc<KcpSession>) -> KcpServerStream {
+        KcpServerStream {
+            session,
+            recv_buffer: Vec::new(),
+            recv_buffer_pos: 0,
+            recv_buffer_cap: 0,
+        }
+    }
+
+    pub fn poll_send(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<KcpResult<usize>> {
+        // Mutex doesn't have poll_lock, spinning on it.
+        let socket = self.session.kcp_socket();
+        let mut kcp = match socket.try_lock() {
+            Ok(guard) => guard,
+            Err(..) => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+        };
+
+        kcp.poll_send(cx, buf)
+    }
+
+    pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_send(cx, buf)).await
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<KcpResult<usize>> {
+        loop {
+            // Consumes all data in buffer
+            if self.recv_buffer_pos < self.recv_buffer_cap {
+                let remaining = self.recv_buffer_cap - self.recv_buffer_pos;
+                let copy_length = remaining.min(buf.len());
+
+                buf.copy_from_slice(&self.recv_buffer[self.recv_buffer_pos..self.recv_buffer_pos + copy_length]);
+                self.recv_buffer_pos += copy_length;
+                return Ok(copy_length).into();
+            }
+
+            // Mutex doesn't have poll_lock, spinning on it.
+            let socket = self.session.kcp_socket();
+            let mut kcp = match socket.try_lock() {
+                Ok(guard) => guard,
+                Err(..) => {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+            };
+
+            // Try to read from KCP
+            // 1. Read directly with user provided `buf`
+            match ready!(kcp.poll_recv(cx, buf)) {
+                Ok(n) => return Ok(n).into(),
+                Err(KcpError::UserBufTooSmall) => {}
+                Err(err) => return Err(err).into(),
+            }
+
+            // 2. User `buf` too small, read to recv_buffer
+            let required_size = kcp.peek_size()?;
+            if self.recv_buffer.len() < required_size {
+                self.recv_buffer.resize(required_size, 0);
+            }
+
+            match ready!(kcp.poll_recv(cx, &mut self.recv_buffer)) {
+                Ok(n) => {
+                    self.recv_buffer_pos = 0;
+                    self.recv_buffer_cap = n;
+                }
+                Err(err) => return Err(err).into(),
+            }
+        }
+    }
+
+    pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
+        future::poll_fn(|cx| self.poll_recv(cx, buf)).await
+    }
+}
+
+impl AsyncRead for KcpServerStream {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match ready!(self.poll_recv(cx, buf.initialize_unfilled())) {
+            Ok(n) => {
+                buf.advance(n);
+                Ok(()).into()
+            }
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
+    }
+}
+
+impl AsyncWrite for KcpServerStream {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match ready!(self.poll_send(cx, buf)) {
+            Ok(n) => Ok(n).into(),
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // Mutex doesn't have poll_lock, spinning on it.
+        let socket = self.session.kcp_socket();
+        let mut kcp = match socket.try_lock() {
+            Ok(guard) => guard,
+            Err(..) => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+        };
+
+        match kcp.flush() {
+            Ok(..) => Ok(()).into(),
+            Err(KcpError::IoError(err)) => Err(err).into(),
+            Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Ok(()).into()
     }
 }

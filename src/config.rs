@@ -41,6 +41,21 @@ impl KcpNoDelayConfig {
             nc: true,
         }
     }
+
+    /// Get a normal configuration
+    ///
+    /// 1. Disable NoDelay
+    /// 2. Set ticking interval to be 40ms
+    /// 3. Disable fast resend
+    /// 4. Enable congestion control
+    pub fn normal() -> KcpNoDelayConfig {
+        KcpNoDelayConfig {
+            nodelay: false,
+            interval: 40,
+            resend: 0,
+            nc: false,
+        }
+    }
 }
 
 /// Kcp Config
@@ -48,10 +63,8 @@ impl KcpNoDelayConfig {
 pub struct KcpConfig {
     /// Max Transmission Unit
     pub mtu: Option<usize>,
-    /// Internal update interval
-    pub interval: Option<u32>,
     /// nodelay
-    pub nodelay: Option<KcpNoDelayConfig>,
+    pub nodelay: KcpNoDelayConfig,
     /// Send window size
     pub wnd_size: Option<(u16, u16)>,
     /// Minimal resend timeout
@@ -70,8 +83,7 @@ impl Default for KcpConfig {
     fn default() -> KcpConfig {
         KcpConfig {
             mtu: None,
-            interval: None,
-            nodelay: None,
+            nodelay: KcpNoDelayConfig::normal(),
             wnd_size: None,
             rx_minrto: None,
             session_expire: Duration::from_secs(90),
@@ -90,17 +102,12 @@ impl KcpConfig {
             k.set_mtu(mtu).expect("Invalid MTU");
         }
 
-        if let Some(interval) = self.interval {
-            k.set_interval(interval);
-        }
-
-        if let Some(ref nodelay) = self.nodelay {
-            k.set_nodelay(nodelay.nodelay, nodelay.interval, nodelay.resend, nodelay.nc);
-        } else {
-            // Normal Mode recommend by KCP upstream
-            // https://github.com/skywind3000/kcp#%E5%8D%8F%E8%AE%AE%E9%85%8D%E7%BD%AE
-            k.set_nodelay(false, 40, 0, false);
-        }
+        k.set_nodelay(
+            self.nodelay.nodelay,
+            self.nodelay.interval,
+            self.nodelay.resend,
+            self.nodelay.nc,
+        );
 
         if let Some(rm) = self.rx_minrto {
             k.set_rx_minrto(rm);

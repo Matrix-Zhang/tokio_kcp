@@ -87,8 +87,8 @@ impl Default for KcpConfig {
             wnd_size: None,
             rx_minrto: None,
             session_expire: Duration::from_secs(90),
-            flush_write: true,
-            flush_acks_input: true,
+            flush_write: false,
+            flush_acks_input: false,
             stream: true,
         }
     }

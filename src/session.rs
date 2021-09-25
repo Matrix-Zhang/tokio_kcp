@@ -54,6 +54,8 @@ impl KcpSession {
                 let mut input_buffer = [0u8; 65536];
 
                 loop {
+                    let mut go_sleep = false;
+
                     let next = {
                         let mut socket = session.socket.lock().await;
 
@@ -65,7 +67,7 @@ impl KcpSession {
 
                         if is_client {
                             // If this is a client stream, pull data from socket automatically
-                            loop {
+                            for _ in 0..5 {
                                 match socket.udp_socket().try_recv(&mut input_buffer) {
                                     Ok(n) => {
                                         let input_buffer = &input_buffer[..n];
@@ -75,11 +77,12 @@ impl KcpSession {
 
                                         trace!("[SESSION] recv then input {} bytes", n);
 
-                                        // continue loop. recv until EAGAIN.
-                                        let _ = socket.update();
                                         continue;
                                     }
-                                    Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
+                                    Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
+                                        // recv nothing. sleep until next update
+                                        go_sleep = true;
+                                    }
                                     Err(err) => {
                                         error!("[SESSION] UDP recv failed, error: {}", err);
                                     }
@@ -123,7 +126,11 @@ impl KcpSession {
                         }
                     };
 
-                    time::sleep_until(next).await;
+                    if go_sleep {
+                        time::sleep_until(next).await;
+                    } else {
+                        tokio::task::yield_now().await;
+                    }
                 }
 
                 {

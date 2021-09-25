@@ -96,6 +96,10 @@ impl KcpConfig {
 
         if let Some(ref nodelay) = self.nodelay {
             k.set_nodelay(nodelay.nodelay, nodelay.interval, nodelay.resend, nodelay.nc);
+        } else {
+            // Normal Mode recommend by KCP upstream
+            // https://github.com/skywind3000/kcp#%E5%8D%8F%E8%AE%AE%E9%85%8D%E7%BD%AE
+            k.set_nodelay(false, 40, 0, false);
         }
 
         if let Some(rm) = self.rx_minrto {

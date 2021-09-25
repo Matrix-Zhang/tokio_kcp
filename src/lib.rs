@@ -3,7 +3,7 @@
 pub use self::{
     config::{KcpConfig, KcpNoDelayConfig},
     listener::KcpListener,
-    stream::{KcpServerStream, KcpStream},
+    stream::KcpStream,
 };
 
 mod config;

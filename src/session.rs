@@ -65,18 +65,27 @@ impl KcpSession {
 
                         if is_client {
                             // If this is a client stream, pull data from socket automatically
+                            loop {
+                                match socket.udp_socket().try_recv(&mut input_buffer) {
+                                    Ok(n) => {
+                                        let input_buffer = &input_buffer[..n];
+                                        if let Err(err) = socket.input(input_buffer) {
+                                            error!("[SESSION] input failed, error: {}", err);
+                                        }
 
-                            match socket.udp_socket().try_recv(&mut input_buffer) {
-                                Ok(n) => {
-                                    let input_buffer = &input_buffer[..n];
-                                    if let Err(err) = socket.input(input_buffer) {
-                                        error!("[SESSION] input failed, error: {}", err);
+                                        trace!("[SESSION] recv then input {} bytes", n);
+
+                                        // continue loop. recv until EAGAIN.
+                                        let _ = socket.update();
+                                        continue;
+                                    }
+                                    Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
+                                    Err(err) => {
+                                        error!("[SESSION] UDP recv failed, error: {}", err);
                                     }
                                 }
-                                Err(ref err) if err.kind() == ErrorKind::WouldBlock => {}
-                                Err(err) => {
-                                    error!("[SESSION] UDP recv failed, error: {}", err);
-                                }
+
+                                break;
                             }
                         } else {
                             // If this is a server stream, close it automatically after a period of time

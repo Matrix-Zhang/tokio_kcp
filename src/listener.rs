@@ -15,11 +15,11 @@ use tokio::{
     time,
 };
 
-use crate::{config::KcpConfig, session::KcpSessionManager, stream::KcpServerStream};
+use crate::{config::KcpConfig, session::KcpSessionManager, stream::KcpStream};
 
 pub struct KcpListener {
     udp: Arc<UdpSocket>,
-    accept_rx: mpsc::Receiver<(KcpServerStream, SocketAddr)>,
+    accept_rx: mpsc::Receiver<(KcpStream, SocketAddr)>,
     task_watcher: JoinHandle<()>,
 }
 
@@ -73,7 +73,7 @@ impl KcpListener {
                                     Ok((s, created)) => {
                                         if created {
                                             // Created a new session, constructed a new accepted client
-                                            let stream = KcpServerStream::with_session(s.clone());
+                                            let stream = KcpStream::with_session(s.clone());
                                             if let Err(..) = accept_tx.try_send((stream, peer_addr)) {
                                                 debug!("failed to create accepted stream due to channel failure");
 
@@ -109,7 +109,7 @@ impl KcpListener {
         })
     }
 
-    pub async fn accept(&mut self) -> KcpResult<(KcpServerStream, SocketAddr)> {
+    pub async fn accept(&mut self) -> KcpResult<(KcpStream, SocketAddr)> {
         match self.accept_rx.recv().await {
             Some(s) => Ok(s),
             None => Err(KcpError::IoError(io::Error::new(

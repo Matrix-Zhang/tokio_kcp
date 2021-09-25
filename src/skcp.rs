@@ -72,7 +72,6 @@ pub struct KcpSocket {
     socket: Arc<UdpSocket>,
     flush_write: bool,
     flush_ack_input: bool,
-    input_buf: Vec<u8>,
     sent_first: bool,
     pending_sender: Option<Waker>,
     pending_receiver: Option<Waker>,
@@ -108,7 +107,6 @@ impl KcpSocket {
             socket,
             flush_write: c.flush_write,
             flush_ack_input: c.flush_acks_input,
-            input_buf: Vec::new(),
             sent_first: false,
             pending_sender: None,
             pending_receiver: None,
@@ -133,26 +131,6 @@ impl KcpSocket {
         }
 
         Ok(())
-    }
-
-    /// Recv then input, ignore WouldBlock
-    pub fn fetch(&mut self) -> KcpResult<()> {
-        if self.kcp.mtu() > self.input_buf.len() {
-            self.input_buf.resize(self.kcp.mtu(), 0);
-        }
-
-        let n = match self.socket.try_recv(&mut self.input_buf) {
-            Ok(n) => n,
-            Err(ref err) if err.kind() == ErrorKind::WouldBlock => {
-                // Ignore EAGAIN, nothing to read
-                return Ok(());
-            }
-            Err(err) => return Err(From::from(err)),
-        };
-
-        // self.input_buf won't be used in self.input()
-        let input_buf = unsafe { &mut *(&mut self.input_buf[..n] as *mut _) };
-        self.input(input_buf)
     }
 
     /// Call if you want to send some data
@@ -191,10 +169,12 @@ impl KcpSocket {
     }
 
     /// Call if you want to send some data
+    #[allow(dead_code)]
     pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         future::poll_fn(|cx| self.poll_send(cx, buf)).await
     }
 
+    #[allow(dead_code)]
     pub fn try_recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         if self.closed {
             return Ok(0);
@@ -217,6 +197,7 @@ impl KcpSocket {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         future::poll_fn(|cx| self.poll_recv(cx, buf)).await
     }

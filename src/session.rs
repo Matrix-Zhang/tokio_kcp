@@ -18,9 +18,11 @@ use tokio::{
 };
 
 use crate::{skcp::KcpSocket, KcpConfig};
+use tokio::sync::mpsc::Sender;
 
 pub struct KcpSession {
     socket: Mutex<KcpSocket>,
+    input_sender: Sender<Vec<u8>>,
     closed: AtomicBool,
     session_expire: Duration,
     session_close_notifier: Option<mpsc::Sender<u32>>,
@@ -29,15 +31,21 @@ pub struct KcpSession {
 impl KcpSession {
     fn new(
         socket: KcpSocket,
+        input_sender: Sender<Vec<u8>>,
         session_expire: Duration,
         session_close_notifier: Option<mpsc::Sender<u32>>,
     ) -> KcpSession {
         KcpSession {
             socket: Mutex::new(socket),
+            input_sender,
             closed: AtomicBool::new(false),
             session_expire,
             session_close_notifier,
         }
+    }
+
+    pub async fn socket_input(&self, packet: &[u8]) {
+        self.input_sender.send(Vec::from(packet)).await.unwrap()
     }
 
     pub fn new_shared(
@@ -46,7 +54,13 @@ impl KcpSession {
         session_close_notifier: Option<mpsc::Sender<u32>>,
     ) -> Arc<KcpSession> {
         let is_client = session_close_notifier.is_none();
-        let session = Arc::new(KcpSession::new(socket, session_expire, session_close_notifier));
+        let (input_sender, mut input_receiver) = mpsc::channel(1024);
+        let session = Arc::new(KcpSession::new(
+            socket,
+            input_sender,
+            session_expire,
+            session_close_notifier,
+        ));
 
         {
             let session = session.clone();
@@ -63,6 +77,13 @@ impl KcpSession {
                         if is_closed && socket.can_close() {
                             trace!("[SESSION] KCP session closed");
                             break;
+                        }
+
+                        while let Ok(packet) = input_receiver.try_recv() {
+                            if let Err(err) = socket.input(&packet) {
+                                unreachable!();
+                                // error!("kcp.input failed, peer: {}, conv: {}, error: {}, packet: {:?}", peer_addr, conv, err, ByteStr::new(packet));
+                            }
                         }
 
                         if is_client {

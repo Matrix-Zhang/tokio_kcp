@@ -243,8 +243,8 @@ impl KcpSocket {
         }
     }
 
-    pub fn udp_socket(&self) -> &UdpSocket {
-        self.socket.as_ref()
+    pub fn udp_socket(&self) -> &Arc<UdpSocket> {
+        &self.socket
     }
 
     pub fn can_close(&self) -> bool {

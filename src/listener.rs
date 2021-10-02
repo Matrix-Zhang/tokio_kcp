@@ -91,10 +91,11 @@ impl KcpListener {
                                     }
                                 };
 
-                                let mut kcp = session.kcp_socket().lock().await;
-                                if let Err(err) = kcp.input(packet) {
-                                    error!("kcp.input failed, peer: {}, conv: {}, error: {}, packet: {:?}", peer_addr, conv, err, ByteStr::new(packet));
-                                }
+                                // let mut kcp = session.kcp_socket().lock().await;
+                                // if let Err(err) = kcp.input(packet) {
+                                //     error!("kcp.input failed, peer: {}, conv: {}, error: {}, packet: {:?}", peer_addr, conv, err, ByteStr::new(packet));
+                                // }
+                                session.input(packet).await;
                             }
                         }
                     }

@@ -115,12 +115,12 @@ impl KcpSocket {
     }
 
     /// Call every time you got data from transmission
-    pub fn input(&mut self, buf: &[u8]) -> KcpResult<()> {
+    pub fn input(&mut self, buf: &[u8]) -> KcpResult<bool> {
         match self.kcp.input(buf) {
             Ok(..) => {}
             Err(KcpError::ConvInconsistent(expected, actual)) => {
                 trace!("[INPUT] Conv expected={} actual={} ignored", expected, actual);
-                return Ok(());
+                return Ok(false);
             }
             Err(err) => return Err(err),
         }
@@ -130,7 +130,7 @@ impl KcpSocket {
             self.kcp.flush_ack()?;
         }
 
-        Ok(())
+        Ok(self.try_wake_pending_waker())
     }
 
     /// Call if you want to send some data
@@ -208,10 +208,8 @@ impl KcpSocket {
         Ok(())
     }
 
-    pub fn update(&mut self) -> KcpResult<Instant> {
-        let now = now_millis();
-        self.kcp.update(now)?;
-        let next = self.kcp.check(now);
+    fn try_wake_pending_waker(&mut self) -> bool {
+        let mut waked = false;
 
         if self.pending_sender.is_some()
             && self.kcp.wait_snd() < self.kcp.snd_wnd() as usize
@@ -219,6 +217,8 @@ impl KcpSocket {
         {
             let waker = self.pending_sender.take().unwrap();
             waker.wake();
+
+            waked = true;
         }
 
         if self.pending_receiver.is_some() {
@@ -226,9 +226,21 @@ impl KcpSocket {
                 if peek > 0 {
                     let waker = self.pending_receiver.take().unwrap();
                     waker.wake();
+
+                    waked = true;
                 }
             }
         }
+
+        waked
+    }
+
+    pub fn update(&mut self) -> KcpResult<Instant> {
+        let now = now_millis();
+        self.kcp.update(now)?;
+        let next = self.kcp.check(now);
+
+        self.try_wake_pending_waker();
 
         Ok(Instant::now() + Duration::from_millis(next as u64))
     }

@@ -82,8 +82,15 @@ impl KcpSession {
                                     trace!("[SESSION] UDP recv {} bytes, going to input {:?}", n, ByteStr::new(input_buffer));
 
                                     let mut socket = session.socket.lock().await;
-                                    if let Err(err) = socket.input(input_buffer) {
-                                        error!("[SESSION] UDP input {} bytes error: {}, input buffer {:?}", n, err, ByteStr::new(input_buffer));
+
+                                    match socket.input(input_buffer) {
+                                        Ok(true) => {
+                                            trace!("[SESSION] UDP input {} bytes and waked sender/receiver", n);
+                                        }
+                                        Ok(false) => {}
+                                        Err(err) => {
+                                            error!("[SESSION] UDP input {} bytes error: {}, input buffer {:?}", n, err, ByteStr::new(input_buffer));
+                                        }
                                     }
                                 }
                             }

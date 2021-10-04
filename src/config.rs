@@ -62,13 +62,11 @@ impl KcpNoDelayConfig {
 #[derive(Debug, Clone, Copy)]
 pub struct KcpConfig {
     /// Max Transmission Unit
-    pub mtu: Option<usize>,
+    pub mtu: usize,
     /// nodelay
     pub nodelay: KcpNoDelayConfig,
     /// Send window size
-    pub wnd_size: Option<(u16, u16)>,
-    /// Minimal resend timeout
-    pub rx_minrto: Option<u32>,
+    pub wnd_size: (u16, u16),
     /// Session expire duration, default is 90 seconds
     pub session_expire: Duration,
     /// Flush KCP state immediately after write
@@ -82,10 +80,9 @@ pub struct KcpConfig {
 impl Default for KcpConfig {
     fn default() -> KcpConfig {
         KcpConfig {
-            mtu: None,
+            mtu: 1400,
             nodelay: KcpNoDelayConfig::normal(),
-            wnd_size: None,
-            rx_minrto: None,
+            wnd_size: (256, 256),
             session_expire: Duration::from_secs(90),
             flush_write: false,
             flush_acks_input: false,
@@ -98,9 +95,7 @@ impl KcpConfig {
     /// Applies config onto `Kcp`
     #[doc(hidden)]
     pub fn apply_config<W: Write>(&self, k: &mut Kcp<W>) {
-        if let Some(mtu) = self.mtu {
-            k.set_mtu(mtu).expect("Invalid MTU");
-        }
+        k.set_mtu(self.mtu).expect("invalid MTU");
 
         k.set_nodelay(
             self.nodelay.nodelay,
@@ -109,12 +104,6 @@ impl KcpConfig {
             self.nodelay.nc,
         );
 
-        if let Some(rm) = self.rx_minrto {
-            k.set_rx_minrto(rm);
-        }
-
-        if let Some(ws) = self.wnd_size {
-            k.set_wndsize(ws.0, ws.1);
-        }
+        k.set_wndsize(self.wnd_size.0, self.wnd_size.1);
     }
 }

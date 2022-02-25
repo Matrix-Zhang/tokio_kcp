@@ -267,6 +267,14 @@ impl KcpSocket {
         self.kcp.conv()
     }
 
+    pub fn set_conv(&mut self, conv: u32) {
+        self.kcp.set_conv(conv);
+    }
+
+    pub fn waiting_conv(&self) -> bool {
+        self.kcp.waiting_conv()
+    }
+
     pub fn peek_size(&self) -> KcpResult<usize> {
         self.kcp.peeksize()
     }

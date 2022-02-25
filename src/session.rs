@@ -23,7 +23,7 @@ pub struct KcpSession {
     socket: Mutex<KcpSocket>,
     closed: AtomicBool,
     session_expire: Duration,
-    session_close_notifier: Option<mpsc::Sender<u32>>,
+    session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
     input_tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -31,7 +31,7 @@ impl KcpSession {
     fn new(
         socket: KcpSocket,
         session_expire: Duration,
-        session_close_notifier: Option<mpsc::Sender<u32>>,
+        session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
         input_tx: mpsc::Sender<Vec<u8>>,
     ) -> KcpSession {
         KcpSession {
@@ -46,7 +46,7 @@ impl KcpSession {
     pub fn new_shared(
         socket: KcpSocket,
         session_expire: Duration,
-        session_close_notifier: Option<mpsc::Sender<u32>>,
+        session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
     ) -> Arc<KcpSession> {
         let is_client = session_close_notifier.is_none();
 
@@ -79,9 +79,16 @@ impl KcpSession {
                                 }
                                 Ok(n) => {
                                     let input_buffer = &input_buffer[..n];
-                                    trace!("[SESSION] UDP recv {} bytes, going to input {:?}", n, ByteStr::new(input_buffer));
+                                    let input_conv = kcp::get_conv(input_buffer);
+                                    trace!("[SESSION] UDP recv {} bytes, conv: {}, going to input {:?}", n, input_conv, ByteStr::new(input_buffer));
 
                                     let mut socket = session.socket.lock().await;
+
+                                    // Server may allocate another conv for this client.
+                                    if !socket.waiting_conv() && socket.conv() != input_conv {
+                                        trace!("[SESSION] UDP input conv: {} replaces session conv: {}", input_conv, socket.conv());
+                                        socket.set_conv(input_conv);
+                                    }
 
                                     match socket.input(input_buffer) {
                                         Ok(true) => {
@@ -171,9 +178,8 @@ impl KcpSession {
                     socket.close();
                 }
 
-                if let Some(ref notifier) = session.session_close_notifier {
-                    let socket = session.socket.lock().await;
-                    let _ = notifier.send(socket.conv()).await;
+                if let Some((ref notifier, peer_addr)) = session.session_close_notifier {
+                    let _ = notifier.send(peer_addr).await;
                 }
             });
         }
@@ -192,55 +198,78 @@ impl KcpSession {
     pub async fn input(&self, buf: &[u8]) {
         self.input_tx.send(buf.to_owned()).await.expect("input channel closed")
     }
+
+    pub async fn conv(&self) -> u32 {
+        let socket = self.socket.lock().await;
+        socket.conv()
+    }
 }
 
 pub struct KcpSessionManager {
-    sessions: HashMap<u32, Arc<KcpSession>>,
-    next_free_conv: u32,
+    sessions: HashMap<SocketAddr, Arc<KcpSession>>,
 }
 
 impl KcpSessionManager {
     pub fn new() -> KcpSessionManager {
         KcpSessionManager {
             sessions: HashMap::new(),
-            next_free_conv: 0,
         }
     }
 
-    pub fn close_conv(&mut self, conv: u32) {
-        self.sessions.remove(&conv);
-    }
-
+    #[inline]
     pub fn alloc_conv(&mut self) -> u32 {
-        loop {
-            let (mut c, _) = self.next_free_conv.overflowing_add(1);
-            if c == 0 {
-                let (nc, _) = c.overflowing_add(1);
-                c = nc;
-            }
-            self.next_free_conv = c;
-
-            if self.sessions.get(&self.next_free_conv).is_none() {
-                let conv = self.next_free_conv;
-                return conv;
-            }
-        }
+        rand::random()
     }
 
-    pub fn get_or_create(
+    pub fn close_peer(&mut self, peer_addr: SocketAddr) {
+        self.sessions.remove(&peer_addr);
+    }
+
+    pub async fn get_or_create(
         &mut self,
         config: &KcpConfig,
         conv: u32,
+        sn: u32,
         udp: &Arc<UdpSocket>,
         peer_addr: SocketAddr,
-        session_close_notifier: &mpsc::Sender<u32>,
+        session_close_notifier: &mpsc::Sender<SocketAddr>,
     ) -> KcpResult<(Arc<KcpSession>, bool)> {
-        match self.sessions.entry(conv) {
-            Entry::Occupied(occ) => Ok((occ.get().clone(), false)),
+        match self.sessions.entry(peer_addr) {
+            Entry::Occupied(mut occ) => {
+                let session = occ.get();
+
+                if sn == 0 && session.conv().await != conv {
+                    // This is the first packet received from this peer.
+                    // Recreate a new session for this specific client.
+
+                    let socket = KcpSocket::new(config, conv, udp.clone(), peer_addr, config.stream)?;
+                    let session = KcpSession::new_shared(
+                        socket,
+                        config.session_expire,
+                        Some((session_close_notifier.clone(), peer_addr)),
+                    );
+
+                    let old_session = occ.insert(session.clone());
+                    let old_conv = old_session.conv().await;
+                    trace!(
+                        "replaced session with conv: {} (old: {}), peer: {}",
+                        conv,
+                        old_conv,
+                        peer_addr
+                    );
+
+                    Ok((session, true))
+                } else {
+                    Ok((session.clone(), false))
+                }
+            }
             Entry::Vacant(vac) => {
                 let socket = KcpSocket::new(config, conv, udp.clone(), peer_addr, config.stream)?;
-                let session =
-                    KcpSession::new_shared(socket, config.session_expire, Some(session_close_notifier.clone()));
+                let session = KcpSession::new_shared(
+                    socket,
+                    config.session_expire,
+                    Some((session_close_notifier.clone(), peer_addr)),
+                );
                 trace!("created session for conv: {}, peer: {}", conv, peer_addr);
                 vac.insert(session.clone());
                 Ok((session, true))

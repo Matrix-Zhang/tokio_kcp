@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, str};
 
 use tokio::io::{stdin, AsyncReadExt, AsyncWriteExt};
 use tokio_kcp::{KcpConfig, KcpStream};
@@ -18,5 +18,8 @@ async fn main() {
     loop {
         let n = i.read(&mut buffer).await.unwrap();
         stream.write_all(&buffer[..n]).await.unwrap();
+
+        let n = stream.read(&mut buffer).await.unwrap();
+        println!("{}", unsafe { str::from_utf8_unchecked(&buffer[..n]) });
     }
 }

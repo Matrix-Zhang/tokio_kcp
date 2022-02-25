@@ -37,6 +37,7 @@ impl KcpStream {
         };
 
         let udp = Arc::new(udp);
+        // let conv = rand::random();
         let socket = KcpSocket::new(config, 0, udp, addr, config.stream)?;
 
         let session = KcpSession::new_shared(socket, config.session_expire, None);

@@ -13,10 +13,11 @@ edition = "2018"
 [dependencies]
 bytes = "1.1"
 futures = "0.3"
-kcp = "0.4"
+kcp = "0.4.13"
 log = "0.4"
 tokio = { version = "1.11", features = ["net", "sync", "rt"] }
 byte_string = "1"
+rand = "0.8"
 
 [dev-dependencies]
 env_logger = "0.9"

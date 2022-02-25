@@ -43,10 +43,10 @@ impl KcpListener {
             let mut packet_buffer = [0u8; 65536];
             loop {
                 tokio::select! {
-                    conv = close_rx.recv() => {
-                        let conv = conv.expect("close_tx closed unexpectly");
-                        sessions.close_conv(conv);
-                        trace!("session conv: {} removed", conv);
+                    peer_addr = close_rx.recv() => {
+                        let peer_addr = peer_addr.expect("close_tx closed unexpectly");
+                        sessions.close_peer(peer_addr);
+                        trace!("session peer_addr: {} removed", peer_addr);
                     }
 
                     recv_res = udp.recv_from(&mut packet_buffer) => {
@@ -69,7 +69,9 @@ impl KcpListener {
                                     kcp::set_conv(packet, conv);
                                 }
 
-                                let session = match sessions.get_or_create(&config, conv, &udp, peer_addr, &close_tx) {
+                                let sn = kcp::get_sn(packet);
+
+                                let session = match sessions.get_or_create(&config, conv, sn, &udp, peer_addr, &close_tx).await {
                                     Ok((s, created)) => {
                                         if created {
                                             // Created a new session, constructed a new accepted client
@@ -78,7 +80,16 @@ impl KcpListener {
                                                 debug!("failed to create accepted stream due to channel failure");
 
                                                 // remove it from session
-                                                sessions.close_conv(conv);
+                                                sessions.close_peer(peer_addr);
+                                                continue;
+                                            }
+                                        } else {
+                                            let session_conv = s.conv().await;
+                                            if session_conv != conv {
+                                                debug!("received peer: {} with conv: {} not match with session conv: {}",
+                                                       peer_addr,
+                                                       conv,
+                                                       session_conv);
                                                 continue;
                                             }
                                         }

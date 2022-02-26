@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
     net::SocketAddr,
+    ops::Deref,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -64,12 +65,10 @@ impl KcpSession {
             input_tx,
         ));
 
-        {
+        let io_task_handle = {
             let session = session.clone();
             tokio::spawn(async move {
                 let mut input_buffer = [0u8; 65536];
-                let update_timer = time::sleep(Duration::from_millis(10));
-                tokio::pin!(update_timer);
 
                 loop {
                     tokio::select! {
@@ -121,60 +120,65 @@ impl KcpSession {
                                 }
                             }
                         }
+                    }
+                }
+            })
+        };
 
-                        // Call update() in period
-                        _ = &mut update_timer => {
-                            let mut socket = session.socket.lock();
+        // Per-session updater
+        {
+            let session = session.clone();
+            tokio::spawn(async move {
+                while !session.closed.load(Ordering::Relaxed) {
+                    let next = {
+                        let mut socket = session.socket.lock();
 
-                            let is_closed = session.closed.load(Ordering::Acquire);
-                            if is_closed && socket.can_close() {
-                                trace!("[SESSION] KCP session closed");
-                                break;
-                            }
+                        let is_closed = session.closed.load(Ordering::Acquire);
+                        if is_closed && socket.can_close() {
+                            trace!("[SESSION] KCP session closing");
+                            break;
+                        }
 
-                            // server socket expires
-                            if !is_client {
-                                // If this is a server stream, close it automatically after a period of time
-                                let last_update_time = socket.last_update_time();
-                                let elapsed = last_update_time.elapsed();
+                        // server socket expires
+                        if !is_client {
+                            // If this is a server stream, close it automatically after a period of time
+                            let last_update_time = socket.last_update_time();
+                            let elapsed = last_update_time.elapsed();
 
-                                if elapsed > session.session_expire {
-                                    if elapsed > session.session_expire * 2 {
-                                        // Force close. Client may have already gone.
-                                        trace!(
-                                            "[SESSION] force close inactive session, conv: {}, last_update: {}s ago",
-                                            socket.conv(),
-                                            elapsed.as_secs()
-                                        );
-                                        break;
-                                    }
-
-                                    if !is_closed {
-                                        trace!(
-                                            "[SESSION] closing inactive session, conv: {}, last_update: {}s ago",
-                                            socket.conv(),
-                                            elapsed.as_secs()
-                                        );
-                                        session.closed.store(true, Ordering::Release);
-                                    }
+                            if elapsed > session.session_expire {
+                                if elapsed > session.session_expire * 2 {
+                                    // Force close. Client may have already gone.
+                                    trace!(
+                                        "[SESSION] force close inactive session, conv: {}, last_update: {}s ago",
+                                        socket.conv(),
+                                        elapsed.as_secs()
+                                    );
+                                    break;
                                 }
-                            }
 
-                            match socket.update() {
-                                Ok(next_next) => {
-                                    update_timer.as_mut().reset(Instant::from_std(next_next));
-                                }
-                                Err(err) => {
-                                    error!("[SESSION] KCP update failed, error: {}", err);
-                                    update_timer.as_mut().reset(Instant::now() + Duration::from_millis(10));
+                                if !is_closed {
+                                    trace!(
+                                        "[SESSION] closing inactive session, conv: {}, last_update: {}s ago",
+                                        socket.conv(),
+                                        elapsed.as_secs()
+                                    );
+                                    session.closed.store(true, Ordering::Release);
                                 }
                             }
                         }
 
-                        _ = session.notifier.notified() => {
-                            trace!("[SESSION] session notified");
-                            update_timer.as_mut().reset(Instant::now());
+                        match socket.update() {
+                            Ok(next_next) => Instant::from_std(next_next),
+                            Err(err) => {
+                                error!("[SESSION] KCP update failed, error: {}", err);
+                                Instant::now() + Duration::from_millis(10)
+                            }
                         }
+                    };
+
+                    tokio::select! {
+                        _ = time::sleep_until(next) => {},
+                        _ = session.notifier.notified() => {},
                     }
                 }
 
@@ -189,6 +193,11 @@ impl KcpSession {
                 if let Some((ref notifier, peer_addr)) = session.session_close_notifier {
                     let _ = notifier.send(peer_addr).await;
                 }
+
+                session.closed.store(true, Ordering::Release);
+                io_task_handle.abort();
+
+                trace!("[SESSION] KCP session closed");
             });
         }
 
@@ -201,6 +210,7 @@ impl KcpSession {
 
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.notify();
     }
 
     pub async fn input(&self, buf: &[u8]) {
@@ -217,8 +227,24 @@ impl KcpSession {
     }
 }
 
+struct KcpSessionUniq(Arc<KcpSession>);
+
+impl Drop for KcpSessionUniq {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+impl Deref for KcpSessionUniq {
+    type Target = KcpSession;
+
+    fn deref(&self) -> &KcpSession {
+        &*self.0
+    }
+}
+
 pub struct KcpSessionManager {
-    sessions: HashMap<SocketAddr, Arc<KcpSession>>,
+    sessions: HashMap<SocketAddr, KcpSessionUniq>,
 }
 
 impl KcpSessionManager {
@@ -261,7 +287,7 @@ impl KcpSessionManager {
                         Some((session_close_notifier.clone(), peer_addr)),
                     );
 
-                    let old_session = occ.insert(session.clone());
+                    let old_session = occ.insert(KcpSessionUniq(session.clone()));
                     let old_conv = old_session.conv().await;
                     trace!(
                         "replaced session with conv: {} (old: {}), peer: {}",
@@ -272,7 +298,7 @@ impl KcpSessionManager {
 
                     Ok((session, true))
                 } else {
-                    Ok((session.clone(), false))
+                    Ok((session.0.clone(), false))
                 }
             }
             Entry::Vacant(vac) => {
@@ -283,7 +309,7 @@ impl KcpSessionManager {
                     Some((session_close_notifier.clone(), peer_addr)),
                 );
                 trace!("created session for conv: {}, peer: {}", conv, peer_addr);
-                vac.insert(session.clone());
+                vac.insert(KcpSessionUniq(session.clone()));
                 Ok((session, true))
             }
         }

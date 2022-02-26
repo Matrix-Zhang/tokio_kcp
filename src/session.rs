@@ -11,20 +11,22 @@ use std::{
 use byte_string::ByteStr;
 use kcp::KcpResult;
 use log::{error, trace};
+use spin::Mutex as SpinMutex;
 use tokio::{
     net::UdpSocket,
-    sync::{mpsc, Mutex},
+    sync::{mpsc, Notify},
     time::{self, Instant},
 };
 
 use crate::{skcp::KcpSocket, KcpConfig};
 
 pub struct KcpSession {
-    socket: Mutex<KcpSocket>,
+    socket: SpinMutex<KcpSocket>,
     closed: AtomicBool,
     session_expire: Duration,
     session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
     input_tx: mpsc::Sender<Vec<u8>>,
+    notifier: Notify,
 }
 
 impl KcpSession {
@@ -35,11 +37,12 @@ impl KcpSession {
         input_tx: mpsc::Sender<Vec<u8>>,
     ) -> KcpSession {
         KcpSession {
-            socket: Mutex::new(socket),
+            socket: SpinMutex::new(socket),
             closed: AtomicBool::new(false),
             session_expire,
             session_close_notifier,
             input_tx,
+            notifier: Notify::new(),
         }
     }
 
@@ -82,7 +85,7 @@ impl KcpSession {
                                     let input_conv = kcp::get_conv(input_buffer);
                                     trace!("[SESSION] UDP recv {} bytes, conv: {}, going to input {:?}", n, input_conv, ByteStr::new(input_buffer));
 
-                                    let mut socket = session.socket.lock().await;
+                                    let mut socket = session.socket.lock();
 
                                     // Server may allocate another conv for this client.
                                     if !socket.waiting_conv() && socket.conv() != input_conv {
@@ -106,7 +109,7 @@ impl KcpSession {
                         // bytes received from listener socket
                         input_opt = input_rx.recv() => {
                             if let Some(input_buffer) = input_opt {
-                                let mut socket = session.socket.lock().await;
+                                let mut socket = session.socket.lock();
                                 match socket.input(&input_buffer) {
                                     Ok(..) => {
                                         trace!("[SESSION] UDP input {} bytes from channel {:?}", input_buffer.len(), ByteStr::new(&input_buffer));
@@ -121,7 +124,7 @@ impl KcpSession {
 
                         // Call update() in period
                         _ = &mut update_timer => {
-                            let mut socket = session.socket.lock().await;
+                            let mut socket = session.socket.lock();
 
                             let is_closed = session.closed.load(Ordering::Acquire);
                             if is_closed && socket.can_close() {
@@ -167,6 +170,11 @@ impl KcpSession {
                                 }
                             }
                         }
+
+                        _ = session.notifier.notified() => {
+                            trace!("[SESSION] session notified");
+                            update_timer.as_mut().reset(Instant::now());
+                        }
                     }
                 }
 
@@ -174,7 +182,7 @@ impl KcpSession {
                     // Close the socket.
                     // Wake all pending tasks and let all send/recv return EOF
 
-                    let mut socket = session.socket.lock().await;
+                    let mut socket = session.socket.lock();
                     socket.close();
                 }
 
@@ -187,7 +195,7 @@ impl KcpSession {
         session
     }
 
-    pub fn kcp_socket(&self) -> &Mutex<KcpSocket> {
+    pub fn kcp_socket(&self) -> &SpinMutex<KcpSocket> {
         &self.socket
     }
 
@@ -200,8 +208,12 @@ impl KcpSession {
     }
 
     pub async fn conv(&self) -> u32 {
-        let socket = self.socket.lock().await;
+        let socket = self.socket.lock();
         socket.conv()
+    }
+
+    pub fn notify(&self) {
+        self.notifier.notify_one();
     }
 }
 

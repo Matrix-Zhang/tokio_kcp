@@ -170,11 +170,11 @@ mod test {
 
         let mut vfut = Vec::new();
 
-        for _ in 1..100 {
+        for _ in 0..10 {
             vfut.push(async move {
                 let mut stream = KcpStream::connect(&KcpConfig::default(), server_addr).await.unwrap();
 
-                for _ in 1..20 {
+                for _ in 0..5 {
                     const SEND_BUFFER: &[u8] = b"HELLO WORLD";
                     assert_eq!(SEND_BUFFER.len(), stream.send(SEND_BUFFER).await.unwrap());
 

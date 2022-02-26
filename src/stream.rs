@@ -37,8 +37,8 @@ impl KcpStream {
         };
 
         let udp = Arc::new(udp);
-        // let conv = rand::random();
-        let socket = KcpSocket::new(config, 0, udp, addr, config.stream)?;
+        let conv = rand::random();
+        let socket = KcpSocket::new(config, conv, udp, addr, config.stream)?;
 
         let session = KcpSession::new_shared(socket, config.session_expire, None);
 
@@ -56,16 +56,10 @@ impl KcpStream {
 
     pub fn poll_send(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<KcpResult<usize>> {
         // Mutex doesn't have poll_lock, spinning on it.
-        let socket = self.session.kcp_socket();
-        let mut kcp = match socket.try_lock() {
-            Ok(guard) => guard,
-            Err(..) => {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-        };
-
-        kcp.poll_send(cx, buf)
+        let mut kcp = self.session.kcp_socket().lock();
+        let result = ready!(kcp.poll_send(cx, buf));
+        self.session.notify();
+        result.into()
     }
 
     pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
@@ -85,20 +79,14 @@ impl KcpStream {
             }
 
             // Mutex doesn't have poll_lock, spinning on it.
-            let socket = self.session.kcp_socket();
-            let mut kcp = match socket.try_lock() {
-                Ok(guard) => guard,
-                Err(..) => {
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-            };
+            let mut kcp = self.session.kcp_socket().lock();
 
             // Try to read from KCP
             // 1. Read directly with user provided `buf`
             match ready!(kcp.poll_recv(cx, buf)) {
                 Ok(n) => {
                     trace!("[CLIENT] recv directly {} bytes", n);
+                    self.session.notify();
                     return Ok(n).into();
                 }
                 Err(KcpError::UserBufTooSmall) => {}
@@ -114,6 +102,7 @@ impl KcpStream {
             match ready!(kcp.poll_recv(cx, &mut self.recv_buffer)) {
                 Ok(n) => {
                     trace!("[CLIENT] recv buffered {} bytes", n);
+                    self.session.notify();
                     self.recv_buffer_pos = 0;
                     self.recv_buffer_cap = n;
                 }
@@ -149,19 +138,14 @@ impl AsyncWrite for KcpStream {
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         // Mutex doesn't have poll_lock, spinning on it.
-        let socket = self.session.kcp_socket();
-        let mut kcp = match socket.try_lock() {
-            Ok(guard) => guard,
-            Err(..) => {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-        };
-
+        let mut kcp = self.session.kcp_socket().lock();
         match kcp.flush() {
-            Ok(..) => Ok(()).into(),
+            Ok(..) => {
+                self.session.notify();
+                Ok(()).into()
+            }
             Err(KcpError::IoError(err)) => Err(err).into(),
             Err(err) => Err(io::Error::new(ErrorKind::Other, err)).into(),
         }

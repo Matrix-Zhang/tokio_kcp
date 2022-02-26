@@ -141,12 +141,15 @@ mod test {
     use super::KcpListener;
     use crate::{config::KcpConfig, stream::KcpStream};
     use futures::future;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn multi_echo() {
         let _ = env_logger::try_init();
 
-        let mut listener = KcpListener::bind(KcpConfig::default(), "127.0.0.1:0").await.unwrap();
+        let config = KcpConfig::default();
+
+        let mut listener = KcpListener::bind(config.clone(), "127.0.0.1:0").await.unwrap();
         let server_addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {
@@ -155,14 +158,14 @@ mod test {
 
                 tokio::spawn(async move {
                     let mut buffer = [0u8; 8192];
-                    while let Ok(n) = stream.recv(&mut buffer).await {
-                        let data = &buffer[..n];
-
-                        let mut sent = 0;
-                        while sent < n {
-                            let sn = stream.send(&data[sent..]).await.unwrap();
-                            sent += sn;
+                    while let Ok(n) = stream.read(&mut buffer).await {
+                        if n == 0 {
+                            break;
                         }
+
+                        let data = &buffer[..n];
+                        stream.write_all(data).await.unwrap();
+                        stream.flush().await.unwrap();
                     }
                 });
             }
@@ -170,13 +173,14 @@ mod test {
 
         let mut vfut = Vec::new();
 
-        for _ in 0..10 {
+        for _ in 0..100 {
             vfut.push(async move {
-                let mut stream = KcpStream::connect(&KcpConfig::default(), server_addr).await.unwrap();
+                let mut stream = KcpStream::connect(&config, server_addr).await.unwrap();
 
-                for _ in 0..5 {
+                for _ in 0..20 {
                     const SEND_BUFFER: &[u8] = b"HELLO WORLD";
-                    assert_eq!(SEND_BUFFER.len(), stream.send(SEND_BUFFER).await.unwrap());
+                    stream.write_all(SEND_BUFFER).await.unwrap();
+                    stream.flush().await.unwrap();
 
                     let mut buffer = [0u8; 1024];
                     let n = stream.recv(&mut buffer).await.unwrap();

@@ -86,7 +86,7 @@ impl Default for KcpConfig {
             session_expire: Duration::from_secs(90),
             flush_write: false,
             flush_acks_input: false,
-            stream: true,
+            stream: false,
         }
     }
 }

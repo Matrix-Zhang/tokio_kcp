@@ -83,18 +83,23 @@ impl KcpStream {
 
             // Try to read from KCP
             // 1. Read directly with user provided `buf`
-            match ready!(kcp.poll_recv(cx, buf)) {
-                Ok(n) => {
-                    trace!("[CLIENT] recv directly {} bytes", n);
-                    self.session.notify();
-                    return Ok(n).into();
+            let peek_size = kcp.peek_size().unwrap_or(0);
+
+            // 1.1. User's provided buffer is larger than available buffer's size
+            if peek_size > 0 && peek_size <= buf.len() {
+                match ready!(kcp.poll_recv(cx, buf)) {
+                    Ok(n) => {
+                        trace!("[CLIENT] recv directly {} bytes", n);
+                        self.session.notify();
+                        return Ok(n).into();
+                    }
+                    Err(KcpError::UserBufTooSmall) => {}
+                    Err(err) => return Err(err).into(),
                 }
-                Err(KcpError::UserBufTooSmall) => {}
-                Err(err) => return Err(err).into(),
             }
 
             // 2. User `buf` too small, read to recv_buffer
-            let required_size = kcp.peek_size()?;
+            let required_size = peek_size;
             if self.recv_buffer.len() < required_size {
                 self.recv_buffer.resize(required_size, 0);
             }

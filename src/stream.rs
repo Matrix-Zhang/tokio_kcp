@@ -105,6 +105,7 @@ impl KcpStream {
             }
 
             match ready!(kcp.poll_recv(cx, &mut self.recv_buffer)) {
+                Ok(0) => return Ok(0).into(),
                 Ok(n) => {
                     trace!("[CLIENT] recv buffered {} bytes", n);
                     self.session.notify();

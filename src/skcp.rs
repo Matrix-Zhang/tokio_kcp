@@ -136,7 +136,7 @@ impl KcpSocket {
     /// Call if you want to send some data
     pub fn poll_send(&mut self, cx: &mut Context<'_>, mut buf: &[u8]) -> Poll<KcpResult<usize>> {
         if self.closed {
-            return Ok(0).into();
+            return Err(io::Error::from(ErrorKind::BrokenPipe).into()).into();
         }
 
         // If:
@@ -148,9 +148,10 @@ impl KcpSocket {
                 || self.kcp.waiting_conv())
         {
             trace!(
-                "[SEND] waitsnd={} sndwnd={} excceeded or waiting conv={}",
+                "[SEND] waitsnd={} sndwnd={} rmtwnd={} excceeded or waiting conv={}",
                 self.kcp.wait_snd(),
                 self.kcp.snd_wnd(),
+                self.kcp.rmt_wnd(),
                 self.kcp.waiting_conv()
             );
 

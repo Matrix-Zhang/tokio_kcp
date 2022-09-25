@@ -30,6 +30,16 @@ pub struct KcpSession {
     notifier: Notify,
 }
 
+impl Drop for KcpSession {
+    fn drop(&mut self) {
+        trace!(
+            "[SESSION] KcpSession conv {} is dropping, closed? {}",
+            self.socket.lock().conv(),
+            self.closed.load(Ordering::Acquire),
+        );
+    }
+}
+
 impl KcpSession {
     fn new(
         socket: KcpSocket,

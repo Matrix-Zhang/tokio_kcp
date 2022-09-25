@@ -193,7 +193,7 @@ impl KcpSocket {
         }
 
         match self.kcp.recv(buf) {
-            Ok(0) | Err(KcpError::RecvQueueEmpty) => {
+            Ok(0) | Err(KcpError::RecvQueueEmpty) | Err(KcpError::ExpectingFragment) => {
                 if let Some(waker) = self.pending_receiver.replace(cx.waker().clone()) {
                     if !cx.waker().will_wake(&waker) {
                         waker.wake();

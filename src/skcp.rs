@@ -193,8 +193,7 @@ impl KcpSocket {
         }
 
         match self.kcp.recv(buf) {
-            Ok(n) => Ok(n).into(),
-            Err(KcpError::RecvQueueEmpty) => {
+            Ok(0) | Err(KcpError::RecvQueueEmpty) => {
                 if let Some(waker) = self.pending_receiver.replace(cx.waker().clone()) {
                     if !cx.waker().will_wake(&waker) {
                         waker.wake();
@@ -203,6 +202,7 @@ impl KcpSocket {
                 Poll::Pending
             }
             Err(err) => Err(err).into(),
+            Ok(n) => Ok(n).into(),
         }
     }
 

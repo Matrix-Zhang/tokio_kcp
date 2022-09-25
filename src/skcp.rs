@@ -142,7 +142,11 @@ impl KcpSocket {
         // If:
         //     1. Have sent the first packet (asking for conv)
         //     2. Too many pending packets
-        if self.sent_first && (self.kcp.wait_snd() >= self.kcp.snd_wnd() as usize || self.kcp.waiting_conv()) {
+        if self.sent_first
+            && (self.kcp.wait_snd() >= self.kcp.snd_wnd() as usize
+                || self.kcp.wait_snd() >= self.kcp.rmt_wnd() as usize
+                || self.kcp.waiting_conv())
+        {
             trace!(
                 "[SEND] waitsnd={} sndwnd={} excceeded or waiting conv={}",
                 self.kcp.wait_snd(),
@@ -164,6 +168,11 @@ impl KcpSocket {
 
         let n = self.kcp.send(buf)?;
         self.sent_first = true;
+
+        if self.kcp.wait_snd() >= self.kcp.snd_wnd() as usize || self.kcp.wait_snd() >= self.kcp.rmt_wnd() as usize {
+            self.kcp.flush()?;
+        }
+
         self.last_update = Instant::now();
 
         if self.flush_write {
@@ -222,6 +231,7 @@ impl KcpSocket {
 
         if self.pending_sender.is_some()
             && self.kcp.wait_snd() < self.kcp.snd_wnd() as usize
+            && self.kcp.wait_snd() < self.kcp.rmt_wnd() as usize
             && !self.kcp.waiting_conv()
         {
             let waker = self.pending_sender.take().unwrap();

@@ -13,7 +13,7 @@ edition = "2018"
 [dependencies]
 bytes = "1.1"
 futures = "0.3"
-kcp = "0.4.13"
+kcp = "0.4.16"
 log = "0.4"
 tokio = { version = "1.11", features = ["net", "sync", "rt", "macros", "time"] }
 byte_string = "1"

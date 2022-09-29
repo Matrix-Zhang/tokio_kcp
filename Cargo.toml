@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.8.2"
+version = "0.9.0"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
@@ -13,7 +13,7 @@ edition = "2018"
 [dependencies]
 bytes = "1.1"
 futures = "0.3"
-kcp = "0.4.16"
+kcp = "0.5.0"
 log = "0.4"
 tokio = { version = "1.11", features = ["net", "sync", "rt", "macros", "time"] }
 byte_string = "1"

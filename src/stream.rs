@@ -90,7 +90,6 @@ impl KcpStream {
                 match ready!(kcp.poll_recv(cx, buf)) {
                     Ok(n) => {
                         trace!("[CLIENT] recv directly {} bytes", n);
-                        self.session.notify();
                         return Ok(n).into();
                     }
                     Err(KcpError::UserBufTooSmall) => {}
@@ -108,7 +107,6 @@ impl KcpStream {
                 Ok(0) => return Ok(0).into(),
                 Ok(n) => {
                     trace!("[CLIENT] recv buffered {} bytes", n);
-                    self.session.notify();
                     self.recv_buffer_pos = 0;
                     self.recv_buffer_cap = n;
                 }

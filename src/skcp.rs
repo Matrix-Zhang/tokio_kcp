@@ -203,16 +203,27 @@ impl KcpSocket {
         }
 
         match self.kcp.recv(buf) {
-            Ok(0) | Err(KcpError::RecvQueueEmpty) | Err(KcpError::ExpectingFragment) => {
+            e @ (Ok(0) | Err(KcpError::RecvQueueEmpty) | Err(KcpError::ExpectingFragment)) => {
+                trace!(
+                    "[RECV] rcvwnd={} peeksize={} r={:?}",
+                    self.kcp.rcv_wnd(),
+                    self.kcp.peeksize().unwrap_or(0),
+                    e
+                );
+
                 if let Some(waker) = self.pending_receiver.replace(cx.waker().clone()) {
                     if !cx.waker().will_wake(&waker) {
                         waker.wake();
                     }
                 }
+
                 Poll::Pending
             }
             Err(err) => Err(err).into(),
-            Ok(n) => Ok(n).into(),
+            Ok(n) => {
+                self.last_update = Instant::now();
+                Ok(n).into()
+            }
         }
     }
 
@@ -301,6 +312,11 @@ impl KcpSocket {
 
     pub fn last_update_time(&self) -> Instant {
         self.last_update
+    }
+
+    pub fn need_flush(&self) -> bool {
+        (self.kcp.wait_snd() >= self.kcp.snd_wnd() as usize || self.kcp.wait_snd() >= self.kcp.rmt_wnd() as usize)
+            && !self.kcp.waiting_conv()
     }
 }
 

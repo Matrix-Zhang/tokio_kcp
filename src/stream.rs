@@ -73,7 +73,8 @@ impl KcpStream {
                 let remaining = self.recv_buffer_cap - self.recv_buffer_pos;
                 let copy_length = remaining.min(buf.len());
 
-                buf.copy_from_slice(&self.recv_buffer[self.recv_buffer_pos..self.recv_buffer_pos + copy_length]);
+                (&mut buf[..copy_length])
+                    .copy_from_slice(&self.recv_buffer[self.recv_buffer_pos..self.recv_buffer_pos + copy_length]);
                 self.recv_buffer_pos += copy_length;
                 return Ok(copy_length).into();
             }

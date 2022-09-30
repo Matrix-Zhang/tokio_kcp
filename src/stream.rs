@@ -30,12 +30,18 @@ impl Drop for KcpStream {
 }
 
 impl KcpStream {
+    /// Create a `KcpStream` connecting to `addr`
     pub async fn connect(config: &KcpConfig, addr: SocketAddr) -> KcpResult<KcpStream> {
         let udp = match addr.ip() {
             IpAddr::V4(..) => UdpSocket::bind("0.0.0.0:0").await?,
             IpAddr::V6(..) => UdpSocket::bind("[::]:0").await?,
         };
 
+        KcpStream::connect_with_socket(config, udp, addr).await
+    }
+
+    /// Create a `KcpStream` with an existed `UdpSocket` connecting to `addr`
+    pub async fn connect_with_socket(config: &KcpConfig, udp: UdpSocket, addr: SocketAddr) -> KcpResult<KcpStream> {
         let udp = Arc::new(udp);
         let conv = rand::random();
         let socket = KcpSocket::new(config, conv, udp, addr, config.stream)?;
@@ -54,6 +60,7 @@ impl KcpStream {
         }
     }
 
+    /// `send` data in `buf`
     pub fn poll_send(&mut self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<KcpResult<usize>> {
         // Mutex doesn't have poll_lock, spinning on it.
         let mut kcp = self.session.kcp_socket().lock();
@@ -62,10 +69,12 @@ impl KcpStream {
         result.into()
     }
 
+    /// `send` data in `buf`
     pub async fn send(&mut self, buf: &[u8]) -> KcpResult<usize> {
         future::poll_fn(|cx| self.poll_send(cx, buf)).await
     }
 
+    /// `recv` data into `buf`
     pub fn poll_recv(&mut self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<KcpResult<usize>> {
         loop {
             // Consumes all data in buffer
@@ -116,6 +125,7 @@ impl KcpStream {
         }
     }
 
+    /// `recv` data into `buf`
     pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         future::poll_fn(|cx| self.poll_recv(cx, buf)).await
     }

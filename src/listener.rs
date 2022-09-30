@@ -30,6 +30,7 @@ impl Drop for KcpListener {
 }
 
 impl KcpListener {
+    /// Create an `KcpListener` bound to `addr`
     pub async fn bind<A: ToSocketAddrs>(config: KcpConfig, addr: A) -> KcpResult<KcpListener> {
         let udp = UdpSocket::bind(addr).await?;
         let udp = Arc::new(udp);
@@ -121,6 +122,7 @@ impl KcpListener {
         })
     }
 
+    /// Accept a new connected `KcpStream`
     pub async fn accept(&mut self) -> KcpResult<(KcpStream, SocketAddr)> {
         match self.accept_rx.recv().await {
             Some(s) => Ok(s),
@@ -131,6 +133,7 @@ impl KcpListener {
         }
     }
 
+    /// Get the local address of the underlying socket
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.udp.local_addr()
     }

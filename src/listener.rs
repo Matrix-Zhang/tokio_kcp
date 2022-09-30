@@ -136,6 +136,20 @@ impl KcpListener {
     }
 }
 
+#[cfg(unix)]
+impl std::os::unix::io::AsRawFd for KcpListener {
+    fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
+        self.udp.as_raw_fd()
+    }
+}
+
+#[cfg(windows)]
+impl std::os::windows::io::AsRawSocket for KcpListener {
+    fn as_raw_socket(&self) -> std::os::windows::prelude::RawSocket {
+        self.windows.as_raw_socket()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::KcpListener;

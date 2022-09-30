@@ -160,3 +160,19 @@ impl AsyncWrite for KcpStream {
         Ok(()).into()
     }
 }
+
+#[cfg(unix)]
+impl std::os::unix::io::AsRawFd for KcpStream {
+    fn as_raw_fd(&self) -> std::os::unix::prelude::RawFd {
+        let kcp_socket = self.session.kcp_socket().lock();
+        kcp_socket.udp_socket().as_raw_fd()
+    }
+}
+
+#[cfg(windows)]
+impl std::os::windows::io::AsRawSocket for KcpStream {
+    fn as_raw_socket(&self) -> std::os::windows::prelude::RawSocket {
+        let kcp_socket = self.session.kcp_socket().lock();
+        kcp_socket.udp_socket().as_raw_socket()
+    }
+}

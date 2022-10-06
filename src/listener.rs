@@ -166,7 +166,7 @@ mod test {
 
         let config = KcpConfig::default();
 
-        let mut listener = KcpListener::bind(config.clone(), "127.0.0.1:0").await.unwrap();
+        let mut listener = KcpListener::bind(config, "127.0.0.1:0").await.unwrap();
         let server_addr = listener.local_addr().unwrap();
 
         tokio::spawn(async move {

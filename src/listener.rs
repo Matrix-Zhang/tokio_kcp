@@ -149,7 +149,7 @@ impl std::os::unix::io::AsRawFd for KcpListener {
 #[cfg(windows)]
 impl std::os::windows::io::AsRawSocket for KcpListener {
     fn as_raw_socket(&self) -> std::os::windows::prelude::RawSocket {
-        self.windows.as_raw_socket()
+        self.udp.as_raw_socket()
     }
 }
 

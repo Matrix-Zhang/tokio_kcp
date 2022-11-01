@@ -33,6 +33,11 @@ impl KcpListener {
     /// Create an `KcpListener` bound to `addr`
     pub async fn bind<A: ToSocketAddrs>(config: KcpConfig, addr: A) -> KcpResult<KcpListener> {
         let udp = UdpSocket::bind(addr).await?;
+        KcpListener::from_socket(config, udp).await
+    }
+
+    /// Create a `KcpListener` from an existed `UdpSocket`
+    pub async fn from_socket(config: KcpConfig, udp: UdpSocket) -> KcpResult<KcpListener> {
         let udp = Arc::new(udp);
         let server_udp = udp.clone();
 

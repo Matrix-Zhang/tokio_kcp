@@ -66,6 +66,7 @@ impl Write for UdpOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct KcpSocket {
     kcp: Kcp<UdpOutput>,
     last_update: Instant,

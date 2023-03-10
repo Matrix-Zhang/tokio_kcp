@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
+    fmt::{self, Debug},
     net::SocketAddr,
     ops::Deref,
     sync::{
@@ -37,6 +38,19 @@ impl Drop for KcpSession {
             self.socket.lock().conv(),
             self.closed.load(Ordering::Acquire),
         );
+    }
+}
+
+impl Debug for KcpSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KcpSession")
+            .field("socket", self.socket.lock().deref())
+            .field("closed", &self.closed.load(Ordering::Relaxed))
+            .field("session_expired", &self.session_expire)
+            .field("session_close_notifier", &self.session_close_notifier)
+            .field("input_tx", &self.input_tx)
+            .field("notifier", &self.notifier)
+            .finish()
     }
 }
 

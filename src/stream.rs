@@ -1,4 +1,5 @@
 use std::{
+    fmt::{self, Debug},
     io::{self, ErrorKind},
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -26,6 +27,17 @@ pub struct KcpStream {
 impl Drop for KcpStream {
     fn drop(&mut self) {
         self.session.close();
+    }
+}
+
+impl Debug for KcpStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KcpStream")
+            .field("session", self.session.as_ref())
+            .field("recv_buffer.len", &self.recv_buffer.len())
+            .field("recv_buffer_pos", &self.recv_buffer_pos)
+            .field("recv_buffer_cap", &self.recv_buffer_cap)
+            .finish()
     }
 }
 

@@ -17,6 +17,7 @@ use tokio::{
 
 use crate::{config::KcpConfig, session::KcpSessionManager, stream::KcpStream};
 
+#[derive(Debug)]
 pub struct KcpListener {
     udp: Arc<UdpSocket>,
     accept_rx: mpsc::Receiver<(KcpStream, SocketAddr)>,

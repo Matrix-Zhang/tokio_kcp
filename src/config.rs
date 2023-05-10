@@ -33,7 +33,7 @@ impl KcpNoDelayConfig {
     /// 2. Set ticking interval to be 10ms
     /// 3. Set fast resend to be 2
     /// 4. Disable congestion control
-    pub fn fastest() -> KcpNoDelayConfig {
+    pub const fn fastest() -> KcpNoDelayConfig {
         KcpNoDelayConfig {
             nodelay: true,
             interval: 10,
@@ -48,7 +48,7 @@ impl KcpNoDelayConfig {
     /// 2. Set ticking interval to be 40ms
     /// 3. Disable fast resend
     /// 4. Enable congestion control
-    pub fn normal() -> KcpNoDelayConfig {
+    pub const fn normal() -> KcpNoDelayConfig {
         KcpNoDelayConfig {
             nodelay: false,
             interval: 40,

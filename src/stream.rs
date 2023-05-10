@@ -141,6 +141,10 @@ impl KcpStream {
     pub async fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         future::poll_fn(|cx| self.poll_recv(cx, buf)).await
     }
+
+    pub fn session(&self) -> &KcpSession {
+        &self.session
+    }
 }
 
 impl AsyncRead for KcpStream {

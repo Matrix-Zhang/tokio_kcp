@@ -142,6 +142,7 @@ impl KcpStream {
         future::poll_fn(|cx| self.poll_recv(cx, buf)).await
     }
 
+    /// Get the `KcpSession` for this `KcpStream`
     pub fn session(&self) -> &KcpSession {
         &self.session
     }

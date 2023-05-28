@@ -105,6 +105,14 @@ impl KcpSession {
                                 }
                                 Ok(n) => {
                                     let input_buffer = &input_buffer[..n];
+
+                                    if input_buffer.len() < kcp::KCP_OVERHEAD {
+                                        error!("packet too short, received {} bytes, but at least {} bytes",
+                                               input_buffer.len(),
+                                               kcp::KCP_OVERHEAD);
+                                        continue;
+                                    }
+
                                     let input_conv = kcp::get_conv(input_buffer);
                                     trace!("[SESSION] UDP recv {} bytes, conv: {}, going to input {:?}",
                                            n, input_conv, ByteStr::new(input_buffer));

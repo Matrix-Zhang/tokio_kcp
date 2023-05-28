@@ -65,7 +65,14 @@ impl KcpListener {
                             Ok((n, peer_addr)) => {
                                 let packet = &mut packet_buffer[..n];
 
-                                log::trace!("received peer: {}, {:?}", peer_addr, ByteStr::new(packet));
+                                trace!("received peer: {}, {:?}", peer_addr, ByteStr::new(packet));
+
+                                if packet.len() < kcp::KCP_OVERHEAD {
+                                    error!("packet too short, received {} bytes, but at least {} bytes",
+                                           packet.len(),
+                                           kcp::KCP_OVERHEAD);
+                                    continue;
+                                }
 
                                 let mut conv = kcp::get_conv(packet);
                                 if conv == 0 {

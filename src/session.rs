@@ -255,8 +255,8 @@ impl KcpSession {
         self.notify();
     }
 
-    pub async fn input(&self, buf: &[u8]) {
-        self.input_tx.send(buf.to_owned()).await.expect("input channel closed")
+    pub async fn input(&self, buf: &[u8]) -> Result<(), SessionClosedError> {
+        self.input_tx.send(buf.to_owned()).await.map_err(|_| SessionClosedError)
     }
 
     pub async fn conv(&self) -> u32 {
@@ -268,6 +268,8 @@ impl KcpSession {
         self.notifier.notify_one();
     }
 }
+
+pub struct SessionClosedError;
 
 struct KcpSessionUniq(Arc<KcpSession>);
 

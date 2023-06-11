@@ -120,7 +120,9 @@ impl KcpListener {
                                 // if let Err(err) = kcp.input(packet) {
                                 //     error!("kcp.input failed, peer: {}, conv: {}, error: {}, packet: {:?}", peer_addr, conv, err, ByteStr::new(packet));
                                 // }
-                                session.input(packet).await;
+                                if session.input(packet).await.is_err() {
+                                    trace!("[SESSION] KCP session is closing while listener tries to input");
+                                }
                             }
                         }
                     }

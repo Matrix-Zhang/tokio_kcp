@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.9.5"
+version = "0.9.6"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"

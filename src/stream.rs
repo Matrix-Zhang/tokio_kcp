@@ -7,7 +7,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future, ready};
+use futures_util::{future, ready};
 use kcp::{Error as KcpError, KcpResult};
 use log::trace;
 use tokio::{

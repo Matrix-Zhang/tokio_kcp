@@ -12,14 +12,14 @@ edition = "2018"
 
 [dependencies]
 bytes = "1.1"
-futures = "0.3"
+futures-util = "0.3"
 kcp = "0.5.3"
 log = "0.4"
-tokio = { version = "1.11", features = ["net", "sync", "rt", "macros", "time"] }
+tokio = { version = "1.37", features = ["net", "sync", "rt", "macros", "time"] }
 byte_string = "1"
 rand = "0.8"
 spin = "0.9"
 
 [dev-dependencies]
-env_logger = "0.10"
+env_logger = "0.11"
 tokio = { version = "1.11", features = ["net", "sync", "rt", "rt-multi-thread", "macros", "time", "io-util", "io-std"]}

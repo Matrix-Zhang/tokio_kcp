@@ -170,10 +170,11 @@ impl std::os::windows::io::AsRawSocket for KcpListener {
 
 #[cfg(test)]
 mod test {
+    use futures_util::future;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::KcpListener;
     use crate::{config::KcpConfig, stream::KcpStream};
-    use futures::future;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]
     async fn multi_echo() {

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures::future;
+use futures_util::future;
 use kcp::{Error as KcpError, Kcp, KcpResult};
 use log::{error, trace};
 use tokio::{net::UdpSocket, sync::mpsc};

@@ -283,7 +283,7 @@ impl Deref for KcpSessionUniq {
     type Target = KcpSession;
 
     fn deref(&self) -> &KcpSession {
-        &*self.0
+        &self.0
     }
 }
 

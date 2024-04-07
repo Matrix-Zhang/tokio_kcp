@@ -164,8 +164,8 @@ impl KcpSocket {
             return Poll::Pending;
         }
 
-        if !self.sent_first && self.kcp.waiting_conv() && buf.len() > self.kcp.mss() as usize {
-            buf = &buf[..self.kcp.mss() as usize];
+        if !self.sent_first && self.kcp.waiting_conv() && buf.len() > self.kcp.mss() {
+            buf = &buf[..self.kcp.mss()];
         }
 
         let n = self.kcp.send(buf)?;

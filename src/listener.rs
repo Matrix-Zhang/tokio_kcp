@@ -90,7 +90,7 @@ impl KcpListener {
                                         if created {
                                             // Created a new session, constructed a new accepted client
                                             let stream = KcpStream::with_session(s.clone());
-                                            if let Err(..) = accept_tx.try_send((stream, peer_addr)) {
+                                            if  accept_tx.try_send((stream, peer_addr)).is_err() {
                                                 debug!("failed to create accepted stream due to channel failure");
 
                                                 // remove it from session

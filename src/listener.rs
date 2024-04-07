@@ -51,7 +51,7 @@ impl KcpListener {
             loop {
                 tokio::select! {
                     peer_addr = close_rx.recv() => {
-                        let peer_addr = peer_addr.expect("close_tx closed unexpectly");
+                        let peer_addr = peer_addr.expect("close_tx closed unexpectedly");
                         sessions.close_peer(peer_addr);
                         trace!("session peer_addr: {} removed", peer_addr);
                     }
@@ -143,7 +143,7 @@ impl KcpListener {
             Some(s) => Ok(s),
             None => Err(KcpError::IoError(io::Error::new(
                 ErrorKind::Other,
-                "accept channel closed unexpectly",
+                "accept channel closed unexpectedly",
             ))),
         }
     }

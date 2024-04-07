@@ -53,7 +53,7 @@ impl Write for UdpOutput {
                 // ignored as packet was lost in transmission
                 trace!("[SEND] UDP send EAGAIN, packet.size: {} bytes, delayed send", buf.len());
 
-                self.delay_tx.send(buf.to_owned()).expect("channel closed unexpectly");
+                self.delay_tx.send(buf.to_owned()).expect("channel closed unexpectedly");
 
                 Ok(buf.len())
             }

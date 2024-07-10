@@ -43,6 +43,8 @@ impl Debug for KcpStream {
 
 impl KcpStream {
     /// Create a `KcpStream` connecting to `addr`
+    ///
+    /// NOTE: `conv` will be randomly generated
     pub async fn connect(config: &KcpConfig, addr: SocketAddr) -> KcpResult<KcpStream> {
         let udp = match addr.ip() {
             IpAddr::V4(..) => UdpSocket::bind("0.0.0.0:0").await?,
@@ -52,10 +54,35 @@ impl KcpStream {
         KcpStream::connect_with_socket(config, udp, addr).await
     }
 
+    /// Create a `KcpStream` connecting to `addr`
+    pub async fn connect_with_conv(config: &KcpConfig, conv: u32, addr: SocketAddr) -> KcpResult<KcpStream> {
+        let udp = match addr.ip() {
+            IpAddr::V4(..) => UdpSocket::bind("0.0.0.0:0").await?,
+            IpAddr::V6(..) => UdpSocket::bind("[::]:0").await?,
+        };
+
+        KcpStream::connect_with_socket_conv(config, conv, udp, addr).await
+    }
+
     /// Create a `KcpStream` with an existed `UdpSocket` connecting to `addr`
+    ///
+    /// NOTE: `conv` will be randomly generated
     pub async fn connect_with_socket(config: &KcpConfig, udp: UdpSocket, addr: SocketAddr) -> KcpResult<KcpStream> {
+        let mut conv = rand::random();
+        while conv == 0 {
+            conv = rand::random();
+        }
+        KcpStream::connect_with_socket_conv(config, conv, udp, addr).await
+    }
+
+    /// Create a `KcpStream` with an existed `UdpSocket` connecting to `addr`
+    pub async fn connect_with_socket_conv(
+        config: &KcpConfig,
+        conv: u32,
+        udp: UdpSocket,
+        addr: SocketAddr,
+    ) -> KcpResult<KcpStream> {
         let udp = Arc::new(udp);
-        let conv = rand::random();
         let socket = KcpSocket::new(config, conv, udp, addr, config.stream)?;
 
         let session = KcpSession::new_shared(socket, config.session_expire, None);

@@ -77,6 +77,7 @@ pub struct KcpSocket {
     pending_sender: Option<Waker>,
     pending_receiver: Option<Waker>,
     closed: bool,
+    allow_recv_empty_packet: bool,
 }
 
 impl KcpSocket {
@@ -112,6 +113,7 @@ impl KcpSocket {
             pending_sender: None,
             pending_receiver: None,
             closed: false,
+            allow_recv_empty_packet: c.allow_recv_empty_packet,
         })
     }
 
@@ -204,28 +206,36 @@ impl KcpSocket {
         }
 
         match self.kcp.recv(buf) {
-            e @ (Ok(0) | Err(KcpError::RecvQueueEmpty) | Err(KcpError::ExpectingFragment)) => {
+            e @ (Err(KcpError::RecvQueueEmpty) | Err(KcpError::ExpectingFragment)) => {
                 trace!(
                     "[RECV] rcvwnd={} peeksize={} r={:?}",
                     self.kcp.rcv_wnd(),
                     self.kcp.peeksize().unwrap_or(0),
                     e
                 );
-
-                if let Some(waker) = self.pending_receiver.replace(cx.waker().clone()) {
-                    if !cx.waker().will_wake(&waker) {
-                        waker.wake();
-                    }
-                }
-
-                Poll::Pending
             }
-            Err(err) => Err(err).into(),
+            Err(err) => return Err(err).into(),
             Ok(n) => {
-                self.last_update = Instant::now();
-                Ok(n).into()
+                if n == 0 && !self.allow_recv_empty_packet {
+                    trace!(
+                        "[RECV] rcvwnd={} peeksize={} r=Ok(0)",
+                        self.kcp.rcv_wnd(),
+                        self.kcp.peeksize().unwrap_or(0),
+                    );
+                } else {
+                    self.last_update = Instant::now();
+                    return Ok(n).into();
+                }
             }
         }
+
+        if let Some(waker) = self.pending_receiver.replace(cx.waker().clone()) {
+            if !cx.waker().will_wake(&waker) {
+                waker.wake();
+            }
+        }
+
+        Poll::Pending
     }
 
     #[allow(dead_code)]
@@ -255,7 +265,7 @@ impl KcpSocket {
 
         if self.pending_receiver.is_some() {
             if let Ok(peek) = self.kcp.peeksize() {
-                if peek > 0 {
+                if self.allow_recv_empty_packet || peek > 0 {
                     let waker = self.pending_receiver.take().unwrap();
                     waker.wake();
 

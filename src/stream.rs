@@ -203,3 +203,57 @@ impl std::os::windows::io::AsRawSocket for KcpStream {
         kcp_socket.udp_socket().as_raw_socket()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::KcpListener;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_stream_echo() {
+        let _ = env_logger::try_init();
+
+        let config = KcpConfig::default();
+        let server_addr = "127.0.0.1:5555".parse::<SocketAddr>().unwrap();
+
+        let mut listener = KcpListener::bind(config.clone(), server_addr).await.unwrap();
+        let listener_hdl = tokio::spawn(async move {
+            loop {
+                let (mut stream, peer_addr) = listener.accept().await.unwrap();
+                println!("accepted {}", peer_addr);
+
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 8192];
+                    loop {
+                        match stream.recv(&mut buffer).await {
+                            Ok(n) => {
+                                println!("server recv: {:?}", &buffer[..n]);
+                                let send_n = stream.send(&buffer[..n]).await.unwrap();
+                                println!("server sent: {}", send_n);
+                            }
+                            Err(err) => {
+                                println!("recv error: {}", err);
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let mut stream = KcpStream::connect(&config, server_addr).await.unwrap();
+
+        let test_payload = b"HELLO WORLD";
+        stream.send(test_payload).await.unwrap();
+        println!("client sent: {:?}", test_payload);
+
+        let mut recv_buffer = [0u8; 1024];
+        let recv_n = stream.recv(&mut recv_buffer).await.unwrap();
+        println!("client recv: {:?}", &recv_buffer[..recv_n]);
+        assert_eq!(recv_n, test_payload.len());
+        assert_eq!(&recv_buffer[..recv_n], test_payload);
+
+        listener_hdl.abort();
+    }
+}

@@ -75,6 +75,8 @@ pub struct KcpConfig {
     pub flush_acks_input: bool,
     /// Stream mode
     pub stream: bool,
+    /// Allow recv 0 byte packet. KCP Segments with 0 byte data are skipped by default.
+    pub allow_recv_empty_packet: bool,
 }
 
 impl Default for KcpConfig {
@@ -87,6 +89,7 @@ impl Default for KcpConfig {
             flush_write: false,
             flush_acks_input: false,
             stream: false,
+            allow_recv_empty_packet: false,
         }
     }
 }

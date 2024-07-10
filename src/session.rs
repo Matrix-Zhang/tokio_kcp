@@ -300,7 +300,11 @@ impl KcpSessionManager {
 
     #[inline]
     pub fn alloc_conv(&mut self) -> u32 {
-        rand::random()
+        let mut conv = rand::random();
+        while conv == 0 {
+            conv = rand::random()
+        }
+        conv
     }
 
     pub fn close_peer(&mut self, peer_addr: SocketAddr) {

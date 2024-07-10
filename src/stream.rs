@@ -55,6 +55,8 @@ impl KcpStream {
     }
 
     /// Create a `KcpStream` connecting to `addr`
+    ///
+    /// `conv` is the conversation identifier, setting to `0` will let server to randomly generate one for you.
     pub async fn connect_with_conv(config: &KcpConfig, conv: u32, addr: SocketAddr) -> KcpResult<KcpStream> {
         let udp = match addr.ip() {
             IpAddr::V4(..) => UdpSocket::bind("0.0.0.0:0").await?,
@@ -76,6 +78,8 @@ impl KcpStream {
     }
 
     /// Create a `KcpStream` with an existed `UdpSocket` connecting to `addr`
+    ///
+    /// `conv` is the conversation identifier, setting to `0` will let server to randomly generate one for you.
     pub async fn connect_with_socket_conv(
         config: &KcpConfig,
         conv: u32,

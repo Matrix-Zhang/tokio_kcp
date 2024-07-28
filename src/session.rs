@@ -25,7 +25,7 @@ use crate::{skcp::KcpSocket, KcpConfig};
 pub struct KcpSession {
     socket: SpinMutex<KcpSocket>,
     closed: AtomicBool,
-    session_expire: Duration,
+    session_expire: Option<Duration>,
     session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
     input_tx: mpsc::Sender<Vec<u8>>,
     notifier: Notify,
@@ -46,7 +46,7 @@ impl Debug for KcpSession {
         f.debug_struct("KcpSession")
             .field("socket", self.socket.lock().deref())
             .field("closed", &self.closed.load(Ordering::Relaxed))
-            .field("session_expired", &self.session_expire)
+            .field("session_expire", &self.session_expire)
             .field("session_close_notifier", &self.session_close_notifier)
             .field("input_tx", &self.input_tx)
             .field("notifier", &self.notifier)
@@ -57,7 +57,7 @@ impl Debug for KcpSession {
 impl KcpSession {
     fn new(
         socket: KcpSocket,
-        session_expire: Duration,
+        session_expire: Option<Duration>,
         session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
         input_tx: mpsc::Sender<Vec<u8>>,
     ) -> KcpSession {
@@ -73,7 +73,7 @@ impl KcpSession {
 
     pub fn new_shared(
         socket: KcpSocket,
-        session_expire: Duration,
+        session_expire: Option<Duration>,
         session_close_notifier: Option<(mpsc::Sender<SocketAddr>, SocketAddr)>,
     ) -> Arc<KcpSession> {
         let is_client = session_close_notifier.is_none();
@@ -182,24 +182,26 @@ impl KcpSession {
                             let last_update_time = socket.last_update_time();
                             let elapsed = last_update_time.elapsed();
 
-                            if elapsed > session.session_expire {
-                                if elapsed > session.session_expire * 2 {
-                                    // Force close. Client may have already gone.
-                                    trace!(
-                                        "[SESSION] force close inactive session, conv: {}, last_update: {}s ago",
-                                        socket.conv(),
-                                        elapsed.as_secs()
-                                    );
-                                    break;
-                                }
+                            if let Some(session_expire) = session.session_expire {
+                                if elapsed > session_expire {
+                                    if elapsed > session_expire * 2 {
+                                        // Force close. Client may have already gone.
+                                        trace!(
+                                            "[SESSION] force close inactive session, conv: {}, last_update: {}s ago",
+                                            socket.conv(),
+                                            elapsed.as_secs()
+                                        );
+                                        break;
+                                    }
 
-                                if !is_closed {
-                                    trace!(
-                                        "[SESSION] closing inactive session, conv: {}, last_update: {}s ago",
-                                        socket.conv(),
-                                        elapsed.as_secs()
-                                    );
-                                    session.closed.store(true, Ordering::Release);
+                                    if !is_closed {
+                                        trace!(
+                                            "[SESSION] closing inactive session, conv: {}, last_update: {}s ago",
+                                            socket.conv(),
+                                            elapsed.as_secs()
+                                        );
+                                        session.closed.store(true, Ordering::Release);
+                                    }
                                 }
                             }
                         }

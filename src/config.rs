@@ -68,7 +68,7 @@ pub struct KcpConfig {
     /// Send window size
     pub wnd_size: (u16, u16),
     /// Session expire duration, default is 90 seconds
-    pub session_expire: Duration,
+    pub session_expire: Option<Duration>,
     /// Flush KCP state immediately after write
     pub flush_write: bool,
     /// Flush ACKs immediately after input
@@ -85,7 +85,7 @@ impl Default for KcpConfig {
             mtu: 1400,
             nodelay: KcpNoDelayConfig::normal(),
             wnd_size: (256, 256),
-            session_expire: Duration::from_secs(90),
+            session_expire: Some(Duration::from_secs(90)),
             flush_write: false,
             flush_acks_input: false,
             stream: false,

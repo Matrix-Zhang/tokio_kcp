@@ -1,6 +1,6 @@
 [package]
 name = "tokio_kcp"
-version = "0.9.8"
+version = "0.10.0"
 authors = ["Matrix <113445886@qq.com>", "Y. T. Chung <zonyitoo@gmail.com>"]
 description = "A kcp implementation for tokio"
 license = "MIT"
@@ -22,4 +22,13 @@ spin = "0.9"
 
 [dev-dependencies]
 env_logger = "0.11"
-tokio = { version = "1.11", features = ["net", "sync", "rt", "rt-multi-thread", "macros", "time", "io-util", "io-std"]}
+tokio = { version = "1.11", features = [
+    "net",
+    "sync",
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "io-util",
+    "io-std",
+] }

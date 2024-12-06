@@ -102,6 +102,8 @@ impl KcpSession {
                             match recv_result {
                                 Err(err) => {
                                     error!("[SESSION] UDP recv failed, error: {}", err);
+                                    session.closed.store(true, Ordering::Release);
+                                    break;
                                 }
                                 Ok(n) => {
                                     let input_buffer = &input_buffer[..n];
